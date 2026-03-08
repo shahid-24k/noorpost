@@ -23,7 +23,7 @@ jobs:
         run: sudo apt-get install -y ffmpeg
 
       - name: Install Python dependencies
-        run: pip install moviepy Pillow requests arabic-reshaper python-bidi APScheduler dropbox
+        run: pip install "moviepy==1.0.3" Pillow requests arabic-reshaper python-bidi APScheduler dropbox imageio imageio-ffmpeg
 
       - name: Create config.py from secrets
         run: |
