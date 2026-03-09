@@ -10,7 +10,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
-from arabic_reshaper.config_factory import config as reshaper_config_factory
 from bidi.algorithm import get_display
 from moviepy.editor import ImageClip, AudioFileClip
 
@@ -19,21 +18,6 @@ import config
 OUTPUT_DIR = Path("output_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# ─────────────────────────────────────────────
-# ARABIC RESHAPER CONFIG — Force proper Arabic
-# ─────────────────────────────────────────────
-RESHAPER_CONFIG = {
-    'language': 'Arabic',
-    'support_ligatures': True,
-    'delete_harakat': False,
-    'delete_tatweel': False,
-    'support_zwj': True,
-    'shift_harakat_position': False,
-    'use_unsupported_chars_as_unshaped': True,
-    'support_ligatures': True,
-    'ARABIC LETTER SMALL HIGH ROUNDED ZERO': True,
-    'ARABIC LETTER SMALL HIGH UPRIGHT RECTANGULAR ZERO': True,
-}
 
 # ─────────────────────────────────────────────
 # FONT LOADER
@@ -69,7 +53,7 @@ def reshape_arabic(text: str) -> str:
 
 def wrap_arabic(text: str, max_chars: int = 25) -> list:
     """
-    Split Arabic text into lines by word, THEN reshape each line.
+    Split Arabic text into lines by word THEN reshape each line.
     This preserves correct letter joining within words.
     """
     words = text.split()
@@ -90,7 +74,6 @@ def wrap_arabic(text: str, max_chars: int = 25) -> list:
     if current_words:
         lines.append(" ".join(current_words))
 
-    # Reshape each line separately for correct letter joining
     return [reshape_arabic(line) for line in lines] if lines else [reshape_arabic(text)]
 
 
@@ -156,7 +139,7 @@ def create_frame(dua: dict) -> Image.Image:
 
     y = 130
 
-    # ── Bismillah (RTL Arabic) ──
+    # ── Bismillah ──
     bism = wrap_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", max_chars=40)
     y = draw_centered(draw, bism, y, fonts["arabic_md"], config.COLOR_GOLD, line_gap=16)
 
@@ -183,7 +166,7 @@ def create_frame(dua: dict) -> Image.Image:
     y += 28
 
     # ── Transliteration — always LTR ──
-    translit = get_display(dua["transliteration"], base_dir='L')
+    translit       = get_display(dua["transliteration"], base_dir='L')
     translit_lines = wrap_latin(translit, max_chars=46)
     y = draw_centered(draw, translit_lines, y, fonts["latin_sm"],
                       config.COLOR_DIM, line_gap=8)
