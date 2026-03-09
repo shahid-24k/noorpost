@@ -63,5 +63,16 @@ jobs:
       - name: Create directories
         run: mkdir -p assets/audio output_videos logs
 
+  - name: Debug config
+        run: |
+          python - << 'PYEOF'
+          try:
+              import config
+              print("APP_KEY:", config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else "EMPTY")
+              print("REFRESH:", config.DROPBOX_REFRESH_TOKEN[:5] if config.DROPBOX_REFRESH_TOKEN else "EMPTY")
+          except Exception as e:
+              print("Config error:", e)
+          PYEOF
+
       - name: Run NoorPost Agent
         run: python main.py --now
