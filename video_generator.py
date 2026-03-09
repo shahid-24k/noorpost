@@ -1,19 +1,17 @@
 """
-video_generator.py — Generates dark aesthetic MP4 videos
-Proper Arabic RTL rendering using harfbuzz/bidi approach
+video_generator.py — Arabic rendered via ImageMagick (proper shaping engine)
+Latin text via Pillow. Composited together.
 """
 
 import textwrap
 import os
 import random
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import urllib.request
-import subprocess
 
 from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
-from bidi.algorithm import get_display
 from moviepy.editor import ImageClip, AudioFileClip
 
 import config
@@ -41,9 +39,6 @@ ARABIC_FONTS = {
     },
 }
 
-# ─────────────────────────────────────────────
-# THEME REGISTRY
-# ─────────────────────────────────────────────
 THEMES = {
     "dark-gold": {
         "bg":       (8,   11,  16),
@@ -51,6 +46,8 @@ THEMES = {
         "gold_dim": (122,  97,  40),
         "white":    (232, 228, 217),
         "dim":      (122, 135, 153),
+        "bg_hex":   "#080b10",
+        "gold_hex": "#c9a84c",
     },
     "navy": {
         "bg":       (8,   18,  40),
@@ -58,6 +55,8 @@ THEMES = {
         "gold_dim": (100,  80,  30),
         "white":    (220, 230, 255),
         "dim":      (100, 120, 160),
+        "bg_hex":   "#08122a",
+        "gold_hex": "#c0a040",
     },
     "green": {
         "bg":       (6,   22,  14),
@@ -65,6 +64,8 @@ THEMES = {
         "gold_dim": ( 90,  80,  30),
         "white":    (220, 240, 225),
         "dim":      ( 90, 130, 100),
+        "bg_hex":   "#06160e",
+        "gold_hex": "#b4a03c",
     },
     "pure-black": {
         "bg":       (  0,   0,   0),
@@ -72,35 +73,27 @@ THEMES = {
         "gold_dim": (130, 110,  45),
         "white":    (255, 255, 255),
         "dim":      (160, 160, 160),
+        "bg_hex":   "#000000",
+        "gold_hex": "#dcc050",
     },
 }
 
-
-# ─────────────────────────────────────────────
-# FONT RESOLVER
-# ─────────────────────────────────────────────
 
 def resolve_font_path() -> str:
     mode = getattr(config, "FONT_MODE", "amiri").lower()
     if mode == "random":
         mode = random.choice(list(ARABIC_FONTS.keys()))
-
     font = ARABIC_FONTS.get(mode, ARABIC_FONTS["amiri"])
     path = Path(font["file"])
-
     if not path.exists() and font["url"]:
         try:
             print(f"[Video] Downloading font: {mode}...")
             urllib.request.urlretrieve(font["url"], str(path))
-            if path.stat().st_size > 10000:
-                print(f"[Video] Font ready: {mode}")
-            else:
+            if path.stat().st_size < 10000:
                 path.unlink()
                 path = Path(ARABIC_FONTS["amiri"]["file"])
-        except Exception as e:
-            print(f"[Video] Font download failed ({e}), using Amiri")
+        except:
             path = Path(ARABIC_FONTS["amiri"]["file"])
-
     print(f"[Video] Font: {mode} -> {path}")
     return str(path)
 
@@ -115,106 +108,85 @@ def resolve_theme() -> dict:
 
 
 # ─────────────────────────────────────────────
-# ARABIC RENDERING — USE CAIRO/PANGO VIA IMAGEMAGICK
-# Fallback: reshape + bidi with Pillow
+# IMAGEMAGICK ARABIC RENDERER
 # ─────────────────────────────────────────────
 
-def render_arabic_line_imagemagick(text: str, font_path: str, font_size: int,
-                                    color: tuple, bg: tuple, width: int) -> Image.Image | None:
+def render_arabic_imagemagick(text: str, font_path: str, font_size: int,
+                               color_hex: str, bg_hex: str,
+                               canvas_w: int) -> Image.Image:
     """
-    Use ImageMagick to render a single Arabic line properly RTL.
-    ImageMagick has built-in RTL/bidi support.
-    Returns PIL Image or None if ImageMagick not available.
+    Render Arabic text properly using ImageMagick.
+    ImageMagick uses FreeType + HarfBuzz for correct Arabic shaping & RTL.
     """
-    try:
-        hex_color = "#{:02x}{:02x}{:02x}".format(*color)
-        hex_bg    = "#{:02x}{:02x}{:02x}".format(*bg)
-        out_path  = "/tmp/arabic_line.png"
+    out_path = "/tmp/arabic_render.png"
 
-        cmd = [
-            "convert",
-            "-size", f"{width}x{font_size * 3}",
-            f"xc:{hex_bg}",
-            "-font", font_path,
-            "-pointsize", str(font_size),
-            "-fill", hex_color,
-            "-gravity", "Center",
-            "-annotate", "0", text,
-            out_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=10)
-        if result.returncode == 0:
-            return Image.open(out_path)
+    # Use pango markup for proper RTL/Arabic rendering
+    cmd = [
+        "convert",
+        "-size", f"{canvas_w}x400",
+        f"xc:{bg_hex}",
+        "-font", font_path,
+        "-pointsize", str(font_size),
+        "-fill", color_hex,
+        "-gravity", "Center",
+        "-annotate", "0", text,
+        "-trim",
+        "+repage",
+        out_path
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=15)
+        if result.returncode == 0 and Path(out_path).exists():
+            img = Image.open(out_path).copy()
+            # Add padding
+            padded = Image.new("RGB", (canvas_w, img.height + 20),
+                               tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
+            x = (canvas_w - img.width) // 2
+            padded.paste(img, (x, 10))
+            return padded
     except Exception as e:
-        pass
-    return None
+        print(f"[Video] ImageMagick error: {e}")
+
+    # Fallback: blank image
+    blank = Image.new("RGB", (canvas_w, font_size + 20),
+                      tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
+    return blank
 
 
-def render_arabic_pil(text: str, font: ImageFont, color: tuple,
-                       bg_color: tuple, width: int) -> Image.Image:
-    """
-    Render Arabic text using PIL with proper reshape+bidi.
-    Each word is reshaped then the whole line is bidi-processed.
-    """
-    # Step 1: reshape the full text first
-    reshaped = arabic_reshaper.reshape(text)
-    # Step 2: apply bidi to get visual order (RTL)
-    visual   = get_display(reshaped)
+def render_arabic_block_imagemagick(lines: list, font_path: str, font_size: int,
+                                     color_hex: str, bg_hex: str,
+                                     canvas_w: int) -> Image.Image:
+    """Render multiple Arabic lines and stack them vertically."""
+    line_imgs = []
+    for line in lines:
+        img = render_arabic_imagemagick(line, font_path, font_size,
+                                         color_hex, bg_hex, canvas_w)
+        line_imgs.append(img)
 
-    # Measure
-    tmp_img  = Image.new("RGB", (10, 10), bg_color)
-    tmp_draw = ImageDraw.Draw(tmp_img)
-    try:
-        bbox = tmp_draw.textbbox((0, 0), visual, font=font)
-        tw   = bbox[2] - bbox[0]
-        th   = bbox[3] - bbox[1]
-    except:
-        tw, th = len(visual) * 20, 60
+    total_h = sum(img.height for img in line_imgs) + 8 * (len(line_imgs) - 1)
+    bg_rgb  = tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4))
+    result  = Image.new("RGB", (canvas_w, total_h), bg_rgb)
 
-    # Create line image with text centered
-    line_img  = Image.new("RGB", (width, th + 20), bg_color)
-    line_draw = ImageDraw.Draw(line_img)
-    x = max(0, (width - tw) // 2)
-    line_draw.text((x, 10), visual, font=font, fill=color)
-    return line_img
+    y = 0
+    for img in line_imgs:
+        result.paste(img, (0, y))
+        y += img.height + 8
+
+    return result
 
 
-def split_arabic_lines(text: str, font: ImageFont, max_width: int) -> list:
-    """
-    Split Arabic text into lines that fit within max_width.
-    Split by words, measure each line.
-    """
+def split_arabic_by_words(text: str, max_words_per_line: int = 4) -> list:
+    """Simple word-based split for Arabic lines."""
     words = text.split()
     lines = []
-    current = []
-
-    for word in words:
-        test_line = " ".join(current + [word])
-        reshaped  = arabic_reshaper.reshape(test_line)
-        visual    = get_display(reshaped)
-
-        tmp_img  = Image.new("RGB", (10, 10))
-        tmp_draw = ImageDraw.Draw(tmp_img)
-        try:
-            bbox = tmp_draw.textbbox((0, 0), visual, font=font)
-            w    = bbox[2] - bbox[0]
-        except:
-            w = len(visual) * 20
-
-        if w > max_width and current:
-            lines.append(" ".join(current))
-            current = [word]
-        else:
-            current.append(word)
-
-    if current:
-        lines.append(" ".join(current))
-
+    for i in range(0, len(words), max_words_per_line):
+        lines.append(" ".join(words[i:i+max_words_per_line]))
     return lines if lines else [text]
 
 
 # ─────────────────────────────────────────────
-# DRAWING HELPERS
+# PILLOW LATIN HELPERS
 # ─────────────────────────────────────────────
 
 def measure(draw, text, font):
@@ -235,19 +207,6 @@ def draw_latin_centered(draw, lines, y, font, color, line_gap=12):
     return y
 
 
-def draw_arabic_block(img, lines_text, y, font, color, bg, line_gap=24):
-    """Draw Arabic lines onto img using render_arabic_pil."""
-    W = img.width
-    for line in lines_text:
-        line_img = render_arabic_pil(line, font, color, bg, W - 100)
-        lh = line_img.height
-        # Paste centered
-        x = 50
-        img.paste(line_img, (x, y))
-        y += lh + line_gap
-    return y
-
-
 def draw_ornament(draw, cx, y, color, width=220):
     draw.line([(cx - width, y), (cx + width, y)], fill=color, width=1)
     draw.ellipse([cx-5, y-5, cx+5, y+5], fill=color)
@@ -264,25 +223,17 @@ def wrap_latin(text: str, max_chars: int = 45) -> list:
 # ─────────────────────────────────────────────
 
 def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
-    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    cx   = W // 2
+    W, H    = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    cx      = W // 2
+    bg_hex  = theme["bg_hex"]
+    gold_hex= theme["gold_hex"]
 
     try:
-        fonts = {
-            "arabic_lg": ImageFont.truetype(font_path, 58),
-            "arabic_md": ImageFont.truetype(font_path, 44),
-            "latin_lg":  ImageFont.truetype(config.FONT_LATIN, 32),
-            "latin_sm":  ImageFont.truetype(config.FONT_LATIN, 20),
-        }
-    except Exception as e:
-        print(f"[Video] Font load error: {e}, falling back to Amiri")
-        fallback = "assets/fonts/Amiri-Regular.ttf"
-        fonts = {
-            "arabic_lg": ImageFont.truetype(fallback, 58),
-            "arabic_md": ImageFont.truetype(fallback, 44),
-            "latin_lg":  ImageFont.truetype(config.FONT_LATIN, 32),
-            "latin_sm":  ImageFont.truetype(config.FONT_LATIN, 20),
-        }
+        latin_lg = ImageFont.truetype(config.FONT_LATIN, 32)
+        latin_sm = ImageFont.truetype(config.FONT_LATIN, 20)
+    except:
+        latin_lg = ImageFont.load_default()
+        latin_sm = ImageFont.load_default()
 
     img  = Image.new("RGB", (W, H), theme["bg"])
     draw = ImageDraw.Draw(img)
@@ -300,65 +251,63 @@ def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
     draw.rectangle([p, p, W-p, H-p], outline=theme["gold_dim"], width=1)
     draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=theme["gold_dim"], width=1)
 
-    y = 130
+    y = 110
 
-    # ── Bismillah ──
-    bism_lines = split_arabic_lines(
-        "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-        fonts["arabic_md"], W - 160
-    )
-    y = draw_arabic_block(img, bism_lines, y, fonts["arabic_md"],
-                          theme["gold"], theme["bg"], line_gap=16)
+    # ── Bismillah via ImageMagick ──
+    bism_lines = split_arabic_by_words("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", max_words_per_line=6)
+    bism_img   = render_arabic_block_imagemagick(bism_lines, font_path, 44,
+                                                  gold_hex, bg_hex, W - 100)
+    img.paste(bism_img, (50, y))
+    y += bism_img.height + 18
 
-    draw = ImageDraw.Draw(img)  # refresh draw after paste
-    y += 18
+    draw = ImageDraw.Draw(img)
     draw_ornament(draw, cx, y, theme["gold_dim"], width=300)
-    y += 32
+    y += 28
 
     # ── Type badge ──
     badge = f"\u2014 {dua['type'].upper()} \u2014"
-    w, h  = measure(draw, badge, fonts["latin_sm"])
-    draw.text(((W-w)//2, y), badge, font=fonts["latin_sm"], fill=theme["gold_dim"])
-    y += h + 28
+    w, h  = measure(draw, badge, latin_sm)
+    draw.text(((W-w)//2, y), badge, font=latin_sm, fill=theme["gold_dim"])
+    y += h + 24
 
     draw_ornament(draw, cx, y, theme["gold_dim"], width=200)
-    y += 42
+    y += 36
 
-    # ── Arabic dua ──
-    arabic_lines = split_arabic_lines(dua["arabic"], fonts["arabic_lg"], W - 160)
-    y = draw_arabic_block(img, arabic_lines, y, fonts["arabic_lg"],
-                          theme["gold"], theme["bg"], line_gap=30)
+    # ── Arabic dua via ImageMagick ──
+    arabic_lines = split_arabic_by_words(dua["arabic"], max_words_per_line=4)
+    arabic_img   = render_arabic_block_imagemagick(arabic_lines, font_path, 58,
+                                                    gold_hex, bg_hex, W - 100)
+    img.paste(arabic_img, (50, y))
+    y += arabic_img.height + 28
 
     draw = ImageDraw.Draw(img)
-    y += 32
     draw_ornament(draw, cx, y, theme["gold_dim"], width=250)
-    y += 28
+    y += 24
 
-    # ── Transliteration (force LTR) ──
-    translit       = get_display(dua["transliteration"], base_dir='L')
-    translit_lines = wrap_latin(translit, max_chars=46)
-    y = draw_latin_centered(draw, translit_lines, y, fonts["latin_sm"],
+    # ── Transliteration ──
+    translit_lines = wrap_latin(dua["transliteration"], max_chars=46)
+    y = draw_latin_centered(draw, translit_lines, y, latin_sm,
                              theme["dim"], line_gap=8)
-    y += 22
+    y += 20
 
     # ── Translation ──
     translation = f'\u201c{dua["translation"]}\u201d'
     trans_lines  = wrap_latin(translation, max_chars=40)
-    y = draw_latin_centered(draw, trans_lines, y, fonts["latin_lg"],
+    y = draw_latin_centered(draw, trans_lines, y, latin_lg,
                              theme["white"], line_gap=14)
-    y += 26
+    y += 24
+
     draw_ornament(draw, cx, y, theme["gold_dim"], width=180)
-    y += 22
+    y += 20
 
     # ── Source ──
     src_lines = wrap_latin(f"Source: {dua['source']}", max_chars=52)
-    y = draw_latin_centered(draw, src_lines, y, fonts["latin_sm"],
-                             theme["gold_dim"], line_gap=8)
+    draw_latin_centered(draw, src_lines, y, latin_sm, theme["gold_dim"], line_gap=8)
 
     # ── Watermark ──
     wm   = "NoorPost \u00b7 Authentic Islamic Content"
-    w, h = measure(draw, wm, fonts["latin_sm"])
-    draw.text(((W-w)//2, H-85), wm, font=fonts["latin_sm"], fill=theme["gold_dim"])
+    w, h = measure(draw, wm, latin_sm)
+    draw.text(((W-w)//2, H-85), wm, font=latin_sm, fill=theme["gold_dim"])
 
     return img
 
