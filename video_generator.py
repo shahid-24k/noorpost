@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
 from bidi.algorithm import get_display
-from moviepy.editor import ImageClip, AudioFileClip, CompositeAudioClip
+from moviepy.editor import ImageClip, AudioFileClip
 
 import config
 
@@ -51,12 +51,25 @@ def fix_arabic(text: str) -> str:
     return get_display(reshaped)
 
 
-def wrap_arabic(text: str, chars_per_line: int = 30) -> list:
-    """Wrap Arabic text into lines BEFORE bidi processing."""
-    raw_lines = textwrap.wrap(text, width=chars_per_line, break_long_words=False)
-    if not raw_lines:
-        raw_lines = [text]
-    return [fix_arabic(line) for line in raw_lines]
+def wrap_arabic(text: str, chars_per_line: int = 22) -> list:
+    """Wrap Arabic text by words BEFORE bidi processing."""
+    words = text.split()
+    lines = []
+    current = []
+    current_len = 0
+    for word in words:
+        if current_len + len(word) > chars_per_line and current:
+            lines.append(" ".join(current))
+            current = [word]
+            current_len = len(word)
+        else:
+            current.append(word)
+            current_len += len(word) + 1
+    if current:
+        lines.append(" ".join(current))
+    if not lines:
+        lines = [text]
+    return [fix_arabic(line) for line in lines]
 
 
 def wrap_latin(text: str, chars_per_line: int = 45) -> list:
@@ -109,10 +122,8 @@ def draw_ornament(draw, cx, y, color, width=200):
 # ─────────────────────────────────────────────
 
 def create_frame(dua: dict) -> Image.Image:
-    W, H   = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    fonts  = load_fonts()
-    MARGIN = 80
-    MAX_W  = W - MARGIN * 2
+    W, H  = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    fonts = load_fonts()
 
     img  = Image.new("RGB", (W, H), config.COLOR_BG)
     draw = ImageDraw.Draw(img)
@@ -130,14 +141,14 @@ def create_frame(dua: dict) -> Image.Image:
     draw.rectangle([pad, pad, W-pad, H-pad], outline=config.COLOR_GOLD_DIM, width=1)
     draw.rectangle([pad+12, pad+12, W-pad-12, H-pad-12], outline=config.COLOR_GOLD_DIM, width=1)
 
-    y = 120
+    y  = 120
+    cx = W // 2
 
     # ── Bismillah ──
     bism_lines = wrap_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", chars_per_line=40)
     y = draw_block(draw, bism_lines, y, fonts["arabic_md"], config.COLOR_GOLD, line_spacing=14)
 
     y += 20
-    cx = W // 2
     draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=280)
     y += 30
 
@@ -151,7 +162,7 @@ def create_frame(dua: dict) -> Image.Image:
     y += 40
 
     # ── Arabic main text ──
-    arabic_lines = wrap_arabic(dua["arabic"], chars_per_line=28)
+    arabic_lines = wrap_arabic(dua["arabic"], chars_per_line=22)
     y = draw_block(draw, arabic_lines, y, fonts["arabic_lg"],
                    config.COLOR_GOLD, line_spacing=28)
 
@@ -210,10 +221,10 @@ def generate_video(dua: dict) -> str:
     try:
         from audio_manager import get_audio_file
         audio_path = get_audio_file(duration=duration)
-
         if audio_path and os.path.exists(audio_path):
-            audio = AudioFileClip(audio_path).subclip(0, min(duration, AudioFileClip(audio_path).duration))
-            audio = audio.volumex(0.35)  # 35% volume — gentle background
+            audio = AudioFileClip(audio_path)
+            audio = audio.subclip(0, min(duration, audio.duration))
+            audio = audio.volumex(0.35)
             audio = audio.audio_fadeout(2)
             clip  = clip.set_audio(audio)
             print("[Video] 🎵 Nasheed audio added!")
