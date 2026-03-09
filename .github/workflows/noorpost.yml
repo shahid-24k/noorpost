@@ -1,11 +1,10 @@
-name: NoorPost Agent
+nname: NoorPost Agent
 
 on:
   schedule:
     - cron: '30 2 * * *'   # 8:00 AM IST
     - cron: '30 15 * * *'  # 9:00 PM IST
-  workflow_dispatch:        # manual run button
-
+  workflow_dispatch:        # ← this line enables the button
 jobs:
   post:
     runs-on: ubuntu-latest
