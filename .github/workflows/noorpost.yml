@@ -24,56 +24,30 @@ jobs:
       - name: Install Python dependencies
         run: pip install "moviepy==1.0.3" Pillow requests arabic-reshaper python-bidi APScheduler dropbox imageio imageio-ffmpeg
 
-      - name: Create config.py from secrets
-        env:
-          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
-          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
-          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+      - name: Create config.py
         run: |
-          python - << 'PYEOF'
-          import os
-          content = """DROPBOX_APP_KEY       = "{key}"
-DROPBOX_APP_SECRET    = "{secret}"
-DROPBOX_REFRESH_TOKEN = "{refresh}"
-DROPBOX_ACCESS_TOKEN  = ""
-SKIP_YOUTUBE          = True
-YT_CREDENTIALS_FILE   = "credentials.json"
-YT_TOKEN_FILE         = "yt_token.pkl"
-POST_TIMES            = [{{"hour": 8, "minute": 0}}, {{"hour": 21, "minute": 0}}]
-TIMEZONE              = "Asia/Kolkata"
-VIDEO_WIDTH           = 1080
-VIDEO_HEIGHT          = 1920
-VIDEO_DURATION        = 15
-VIDEO_FPS             = 24
-FONT_ARABIC           = "assets/fonts/Amiri-Regular.ttf"
-FONT_BOLD             = "assets/fonts/Amiri-Bold.ttf"
-FONT_LATIN            = "assets/fonts/NotoSans-VariableFont_wdth,wght.ttf"
-COLOR_BG              = (8, 11, 16)
-COLOR_GOLD            = (201, 168, 76)
-COLOR_GOLD_DIM        = (122, 97, 40)
-COLOR_WHITE           = (232, 228, 217)
-COLOR_DIM             = (122, 135, 153)
-""".format(
-              key=os.environ.get('DROPBOX_APP_KEY', ''),
-              secret=os.environ.get('DROPBOX_APP_SECRET', ''),
-              refresh=os.environ.get('DROPBOX_REFRESH_TOKEN', ''),
-          )
-          with open("config.py", "w") as f:
-              f.write(content)
-          print("config.py created!")
-          PYEOF
-
-      - name: Debug config
-        run: |
-          python - << 'PYEOF'
-          try:
-              import config
-              print("APP_KEY:", config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else "EMPTY")
-              print("SECRET:", config.DROPBOX_APP_SECRET[:5] if config.DROPBOX_APP_SECRET else "EMPTY")
-              print("REFRESH:", config.DROPBOX_REFRESH_TOKEN[:5] if config.DROPBOX_REFRESH_TOKEN else "EMPTY")
-          except Exception as e:
-              print("Config error:", e)
-          PYEOF
+          echo "DROPBOX_APP_KEY = '${{ secrets.DROPBOX_APP_KEY }}'" > config.py
+          echo "DROPBOX_APP_SECRET = '${{ secrets.DROPBOX_APP_SECRET }}'" >> config.py
+          echo "DROPBOX_REFRESH_TOKEN = '${{ secrets.DROPBOX_REFRESH_TOKEN }}'" >> config.py
+          echo "DROPBOX_ACCESS_TOKEN = ''" >> config.py
+          echo "SKIP_YOUTUBE = True" >> config.py
+          echo "YT_CREDENTIALS_FILE = 'credentials.json'" >> config.py
+          echo "YT_TOKEN_FILE = 'yt_token.pkl'" >> config.py
+          echo "POST_TIMES = [{'hour': 8, 'minute': 0}, {'hour': 21, 'minute': 0}]" >> config.py
+          echo "TIMEZONE = 'Asia/Kolkata'" >> config.py
+          echo "VIDEO_WIDTH = 1080" >> config.py
+          echo "VIDEO_HEIGHT = 1920" >> config.py
+          echo "VIDEO_DURATION = 15" >> config.py
+          echo "VIDEO_FPS = 24" >> config.py
+          echo "FONT_ARABIC = 'assets/fonts/Amiri-Regular.ttf'" >> config.py
+          echo "FONT_BOLD = 'assets/fonts/Amiri-Bold.ttf'" >> config.py
+          echo "FONT_LATIN = 'assets/fonts/NotoSans-VariableFont_wdth,wght.ttf'" >> config.py
+          echo "COLOR_BG = (8, 11, 16)" >> config.py
+          echo "COLOR_GOLD = (201, 168, 76)" >> config.py
+          echo "COLOR_GOLD_DIM = (122, 97, 40)" >> config.py
+          echo "COLOR_WHITE = (232, 228, 217)" >> config.py
+          echo "COLOR_DIM = (122, 135, 153)" >> config.py
+          python -c "import config; print('KEY:', config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else 'EMPTY')"
 
       - name: Create directories
         run: mkdir -p assets/audio output_videos logs
