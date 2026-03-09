@@ -47,6 +47,8 @@ jobs:
           echo "COLOR_GOLD_DIM = (122, 97, 40)" >> config.py
           echo "COLOR_WHITE = (232, 228, 217)" >> config.py
           echo "COLOR_DIM = (122, 135, 153)" >> config.py
+          echo "FONT_MODE = 'noto'" >> config.py
+          echo "THEME_MODE = 'random'" >> config.py
           python -c "import config; print('KEY:', config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else 'EMPTY')"
 
       - name: Create directories
