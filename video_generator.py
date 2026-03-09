@@ -1,6 +1,6 @@
 """
-video_generator.py — Generates dark aesthetic MP4 videos with nasheed audio
-Fixed: Arabic bidi, transliteration direction, text overflow, audio mixing
+video_generator.py — Generates dark aesthetic MP4 videos
+Arabic text rendered properly RTL using Amiri font (Quranic style)
 """
 
 import textwrap
@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
+from arabic_reshaper.config_factory import config as reshaper_config_factory
 from bidi.algorithm import get_display
 from moviepy.editor import ImageClip, AudioFileClip
 
@@ -18,6 +19,21 @@ import config
 OUTPUT_DIR = Path("output_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# ─────────────────────────────────────────────
+# ARABIC RESHAPER CONFIG — Force proper Arabic
+# ─────────────────────────────────────────────
+RESHAPER_CONFIG = {
+    'language': 'Arabic',
+    'support_ligatures': True,
+    'delete_harakat': False,
+    'delete_tatweel': False,
+    'support_zwj': True,
+    'shift_harakat_position': False,
+    'use_unsupported_chars_as_unshaped': True,
+    'support_ligatures': True,
+    'ARABIC LETTER SMALL HIGH ROUNDED ZERO': True,
+    'ARABIC LETTER SMALL HIGH UPRIGHT RECTANGULAR ZERO': True,
+}
 
 # ─────────────────────────────────────────────
 # FONT LOADER
@@ -42,47 +58,53 @@ def load_fonts():
 
 
 # ─────────────────────────────────────────────
-# ARABIC TEXT — FIX BIDI + RESHAPING
+# ARABIC TEXT — PROPER RTL
 # ─────────────────────────────────────────────
 
-def fix_arabic(text: str) -> str:
-    """Reshape Arabic text and apply RTL bidi algorithm correctly."""
+def reshape_arabic(text: str) -> str:
+    """Reshape + apply bidi to get proper RTL Arabic as in Quran."""
     reshaped = arabic_reshaper.reshape(text)
     return get_display(reshaped)
 
 
-def wrap_arabic(text: str, chars_per_line: int = 22) -> list:
-    """Wrap Arabic text by words BEFORE bidi processing."""
+def wrap_arabic(text: str, max_chars: int = 25) -> list:
+    """
+    Split Arabic text into lines by word, THEN reshape each line.
+    This preserves correct letter joining within words.
+    """
     words = text.split()
     lines = []
-    current = []
+    current_words = []
     current_len = 0
+
     for word in words:
-        if current_len + len(word) > chars_per_line and current:
-            lines.append(" ".join(current))
-            current = [word]
-            current_len = len(word)
+        word_len = len(word)
+        if current_len + word_len > max_chars and current_words:
+            lines.append(" ".join(current_words))
+            current_words = [word]
+            current_len = word_len + 1
         else:
-            current.append(word)
-            current_len += len(word) + 1
-    if current:
-        lines.append(" ".join(current))
-    if not lines:
-        lines = [text]
-    return [fix_arabic(line) for line in lines]
+            current_words.append(word)
+            current_len += word_len + 1
+
+    if current_words:
+        lines.append(" ".join(current_words))
+
+    # Reshape each line separately for correct letter joining
+    return [reshape_arabic(line) for line in lines] if lines else [reshape_arabic(text)]
 
 
-def wrap_latin(text: str, chars_per_line: int = 45) -> list:
-    """Wrap Latin text into lines."""
-    lines = textwrap.wrap(text, width=chars_per_line)
+def wrap_latin(text: str, max_chars: int = 45) -> list:
+    """Wrap Latin/transliteration text."""
+    lines = textwrap.wrap(text, width=max_chars)
     return lines if lines else [text]
 
 
 # ─────────────────────────────────────────────
-# TEXT MEASUREMENT
+# DRAWING HELPERS
 # ─────────────────────────────────────────────
 
-def measure_line(draw, text, font):
+def measure(draw, text, font):
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -90,31 +112,21 @@ def measure_line(draw, text, font):
         return len(text) * 12, 36
 
 
-# ─────────────────────────────────────────────
-# DRAW CENTERED TEXT BLOCK
-# ─────────────────────────────────────────────
-
-def draw_block(draw, lines, y_start, font, color, line_spacing=12):
-    """Draw a block of centered lines. Returns final Y."""
+def draw_centered(draw, lines, y, font, color, line_gap=12):
+    """Draw lines centered horizontally. Returns new Y."""
     W = config.VIDEO_WIDTH
-    y = y_start
     for line in lines:
-        w, h = measure_line(draw, line, font)
-        x = max(40, (W - w) // 2)
+        w, h = measure(draw, line, font)
+        x = max(50, (W - w) // 2)
         draw.text((x, y), line, font=font, fill=color)
-        y += h + line_spacing
+        y += h + line_gap
     return y
 
 
-# ─────────────────────────────────────────────
-# DECORATIVE ELEMENTS
-# ─────────────────────────────────────────────
-
-def draw_ornament(draw, cx, y, color, width=200):
-    """Draw a simple Islamic geometric ornament line."""
+def draw_ornament(draw, cx, y, color, width=220):
     draw.line([(cx - width, y), (cx + width, y)], fill=color, width=1)
-    draw.ellipse([cx-4, y-4, cx+4, y+4], fill=color)
-    draw.line([(cx - width//2, y-8), (cx + width//2, y-8)], fill=color, width=1)
+    draw.ellipse([cx-5, y-5, cx+5, y+5], fill=color)
+    draw.line([(cx - width//2, y-10), (cx + width//2, y-10)], fill=color, width=1)
 
 
 # ─────────────────────────────────────────────
@@ -124,91 +136,90 @@ def draw_ornament(draw, cx, y, color, width=200):
 def create_frame(dua: dict) -> Image.Image:
     W, H  = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
     fonts = load_fonts()
+    cx    = W // 2
 
     img  = Image.new("RGB", (W, H), config.COLOR_BG)
     draw = ImageDraw.Draw(img)
 
-    # ── Radial glow background ──
+    # ── Background glow ──
     for r in range(600, 0, -8):
         ratio = (1 - r / 600) ** 2
         c = tuple(int(config.COLOR_BG[i] +
                       (config.COLOR_GOLD[i] - config.COLOR_BG[i]) * ratio * 0.15)
                   for i in range(3))
-        draw.ellipse([W//2-r, H//3-r//2, W//2+r, H//3+r//2], fill=c)
+        draw.ellipse([cx-r, H//3-r//2, cx+r, H//3+r//2], fill=c)
 
-    # ── Outer frame lines ──
-    pad = 40
-    draw.rectangle([pad, pad, W-pad, H-pad], outline=config.COLOR_GOLD_DIM, width=1)
-    draw.rectangle([pad+12, pad+12, W-pad-12, H-pad-12], outline=config.COLOR_GOLD_DIM, width=1)
+    # ── Double border frame ──
+    p = 40
+    draw.rectangle([p, p, W-p, H-p], outline=config.COLOR_GOLD_DIM, width=1)
+    draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=config.COLOR_GOLD_DIM, width=1)
 
-    y  = 120
-    cx = W // 2
+    y = 130
 
-    # ── Bismillah ──
-    bism_lines = wrap_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", chars_per_line=40)
-    y = draw_block(draw, bism_lines, y, fonts["arabic_md"], config.COLOR_GOLD, line_spacing=14)
+    # ── Bismillah (RTL Arabic) ──
+    bism = wrap_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", max_chars=40)
+    y = draw_centered(draw, bism, y, fonts["arabic_md"], config.COLOR_GOLD, line_gap=16)
 
-    y += 20
-    draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=280)
-    y += 30
+    y += 18
+    draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=300)
+    y += 32
 
     # ── Type badge ──
-    badge = f"— {dua['type'].upper()} —"
-    w, h  = measure_line(draw, badge, fonts["latin_sm"])
-    draw.text(((W - w)//2, y), badge, font=fonts["latin_sm"], fill=config.COLOR_GOLD_DIM)
-    y += h + 30
+    badge = f"\u2014 {dua['type'].upper()} \u2014"
+    w, h  = measure(draw, badge, fonts["latin_sm"])
+    draw.text(((W-w)//2, y), badge, font=fonts["latin_sm"], fill=config.COLOR_GOLD_DIM)
+    y += h + 28
 
     draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=200)
-    y += 40
+    y += 42
 
-    # ── Arabic main text ──
-    arabic_lines = wrap_arabic(dua["arabic"], chars_per_line=22)
-    y = draw_block(draw, arabic_lines, y, fonts["arabic_lg"],
-                   config.COLOR_GOLD, line_spacing=28)
+    # ── Main Arabic dua (RTL, Quranic style) ──
+    arabic_lines = wrap_arabic(dua["arabic"], max_chars=22)
+    y = draw_centered(draw, arabic_lines, y, fonts["arabic_lg"],
+                      config.COLOR_GOLD, line_gap=30)
 
-    y += 30
-    draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=240)
-    y += 30
+    y += 32
+    draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=250)
+    y += 28
 
-    # ── Transliteration (force LTR) ──
-    translit_clean = get_display(dua["transliteration"], base_dir='L')
-    translit_lines = wrap_latin(translit_clean, chars_per_line=48)
-    y = draw_block(draw, translit_lines, y, fonts["latin_sm"],
-                   config.COLOR_DIM, line_spacing=8)
+    # ── Transliteration — always LTR ──
+    translit = get_display(dua["transliteration"], base_dir='L')
+    translit_lines = wrap_latin(translit, max_chars=46)
+    y = draw_centered(draw, translit_lines, y, fonts["latin_sm"],
+                      config.COLOR_DIM, line_gap=8)
 
-    y += 24
+    y += 22
 
     # ── Translation ──
-    trans_text  = f'\u201c{dua["translation"]}\u201d'
-    trans_lines = wrap_latin(trans_text, chars_per_line=42)
-    y = draw_block(draw, trans_lines, y, fonts["latin_lg"],
-                   config.COLOR_WHITE, line_spacing=12)
+    translation = f'\u201c{dua["translation"]}\u201d'
+    trans_lines  = wrap_latin(translation, max_chars=40)
+    y = draw_centered(draw, trans_lines, y, fonts["latin_lg"],
+                      config.COLOR_WHITE, line_gap=14)
 
-    y += 28
+    y += 26
     draw_ornament(draw, cx, y, config.COLOR_GOLD_DIM, width=180)
-    y += 24
+    y += 22
 
     # ── Source ──
-    src_lines = wrap_latin(f"📖  {dua['source']}", chars_per_line=50)
-    y = draw_block(draw, src_lines, y, fonts["latin_sm"],
-                   config.COLOR_GOLD_DIM, line_spacing=8)
+    src_lines = wrap_latin(f"Source: {dua['source']}", max_chars=52)
+    y = draw_centered(draw, src_lines, y, fonts["latin_sm"],
+                      config.COLOR_GOLD_DIM, line_gap=8)
 
-    # ── Bottom watermark ──
-    wm = "NoorPost · Authentic Islamic Content"
-    w, h = measure_line(draw, wm, fonts["latin_sm"])
-    draw.text(((W-w)//2, H-90), wm, font=fonts["latin_sm"], fill=config.COLOR_GOLD_DIM)
+    # ── Watermark ──
+    wm   = "NoorPost \u00b7 Authentic Islamic Content"
+    w, h = measure(draw, wm, fonts["latin_sm"])
+    draw.text(((W-w)//2, H-85), wm, font=fonts["latin_sm"], fill=config.COLOR_GOLD_DIM)
 
     return img
 
 
 # ─────────────────────────────────────────────
-# VIDEO GENERATOR WITH AUDIO
+# VIDEO GENERATOR
 # ─────────────────────────────────────────────
 
 def generate_video(dua: dict) -> str:
-    print(f"[Video] 🎨 Generating video: {dua['type']} — {dua['source']}")
+    print(f"[Video] Generating: {dua['type']} — {dua['source']}")
 
-    # ── Render frame ──
     frame      = create_frame(dua)
     frame_path = OUTPUT_DIR / "_frame_temp.png"
     frame.save(str(frame_path))
@@ -217,21 +228,18 @@ def generate_video(dua: dict) -> str:
     clip     = ImageClip(str(frame_path), duration=duration)
     clip     = clip.set_fps(config.VIDEO_FPS)
 
-    # ── Add nasheed audio ──
+    # ── Add nasheed audio if available ──
     try:
         from audio_manager import get_audio_file
         audio_path = get_audio_file(duration=duration)
         if audio_path and os.path.exists(audio_path):
             audio = AudioFileClip(audio_path)
             audio = audio.subclip(0, min(duration, audio.duration))
-            audio = audio.volumex(0.35)
-            audio = audio.audio_fadeout(2)
+            audio = audio.volumex(0.35).audio_fadeout(2)
             clip  = clip.set_audio(audio)
-            print("[Video] 🎵 Nasheed audio added!")
-        else:
-            print("[Video] ⚠️  No audio — generating silent video")
+            print("[Video] Nasheed audio added!")
     except Exception as e:
-        print(f"[Video] ⚠️  Audio skipped: {e}")
+        print(f"[Video] Audio skipped: {e}")
 
     # ── Export ──
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -245,11 +253,10 @@ def generate_video(dua: dict) -> str:
         ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
     )
 
-    # Cleanup temp frame
     try:
         frame_path.unlink()
     except:
         pass
 
-    print(f"[Video] ✅ Saved: {out_path}")
+    print(f"[Video] Saved: {out_path}")
     return out_path
