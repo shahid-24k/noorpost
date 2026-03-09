@@ -1,0 +1,130 @@
+[15:16:37] [INFO] ==================================================
+[15:16:37] [INFO] 🚀 Pipeline started at 15:16:37
+[15:16:37] [INFO] ==================================================
+[15:16:37] [INFO] 📖 Selected: [Morning Adhkar] Sahih Bukhari 6306 — Sayyid al-Istighfar
+[15:16:37] [INFO] ✍️  Caption generated.
+[15:16:39] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_151637.mp4
+[15:16:41] [ERROR] ❌ Dropbox upload failed: BadInputError('fe452a31bde54e98b067159469abf400', 'Error in call to API function "files/upload": The given OAuth 2 access token is malformed.')
+[15:16:41] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[15:16:41] [INFO] ==================================================
+[15:16:41] [INFO] ✅ Dropbox/Instagram: FAILED
+[15:16:41] [INFO] ✅ YouTube:           SKIPPED
+[15:16:41] [INFO] 🌟 Cycle complete — بارك الله فيك
+[15:16:41] [INFO] ==================================================
+[15:17:18] [INFO] ==================================================
+[15:17:18] [INFO] 🚀 Pipeline started at 15:17:18
+[15:17:18] [INFO] ==================================================
+[15:17:18] [INFO] 📖 Selected: [Evening Adhkar] Sahih Muslim 2723
+[15:17:18] [INFO] ✍️  Caption generated.
+[15:17:20] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_151718.mp4
+[15:17:23] [INFO] ✅ Video uploaded to Dropbox!
+[15:17:23] [INFO] 📝 Uploading caption file...
+[15:17:24] [INFO] ✅ Caption uploaded to Dropbox!
+[15:17:25] [ERROR] ❌ Dropbox upload failed: BadInputError('e2a66a179840440e9aa2dea369abf42d', 'Error in call to API function "sharing/create_shared_link": Your app (ID: 6230323) is not permitted to access this endpoint because it does not have the required scope \'sharing.write\'. The owner of the app can enable the scope for the app using the Permissions tab on the App Console.')
+[15:17:25] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[15:17:25] [INFO] ==================================================
+[15:17:25] [INFO] ✅ Dropbox/Instagram: FAILED
+[15:17:25] [INFO] ✅ YouTube:           SKIPPED
+[15:17:25] [INFO] 🌟 Cycle complete — بارك الله فيك
+[15:17:25] [INFO] ==================================================
+[19:53:52] [INFO] ==================================================
+[19:53:52] [INFO] 🚀 Pipeline started at 19:53:52
+[19:53:52] [INFO] ==================================================
+[19:53:52] [INFO] 📖 Selected: [Qur'anic Dua] Qur'an 3:8
+[19:53:52] [INFO] ✍️  Caption generated.
+[19:53:55] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_195352.mp4
+[19:53:57] [ERROR] ❌ Dropbox upload failed: AuthError('ba55d8a7cb4041da91e0d2c069ac34fd', AuthError('expired_access_token', None))
+[19:53:57] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[19:53:57] [INFO] ==================================================
+[19:53:57] [INFO] ✅ Dropbox/Instagram: FAILED
+[19:53:57] [INFO] ✅ YouTube:           SKIPPED
+[19:53:57] [INFO] 🌟 Cycle complete — بارك الله فيك
+[19:53:57] [INFO] ==================================================
+[20:11:29] [INFO] ==================================================
+[20:11:29] [INFO] 🚀 Pipeline started at 20:11:29
+[20:11:29] [INFO] ==================================================
+[20:11:29] [INFO] 📖 Selected: [Qur'anic Dua] Qur'an 28:24 (Dua of Musa AS)
+[20:11:29] [INFO] ✍️  Caption generated.
+[20:11:31] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_201129.mp4
+[20:11:33] [ERROR] ❌ Dropbox upload failed: AuthError('855249e422464b05a8d324a469ac391d', AuthError('expired_access_token', None))
+[20:11:33] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[20:11:33] [INFO] ==================================================
+[20:11:33] [INFO] ✅ Dropbox/Instagram: FAILED
+[20:11:33] [INFO] ✅ YouTube:           SKIPPED
+[20:11:33] [INFO] 🌟 Cycle complete — بارك الله فيك
+[20:11:33] [INFO] ==================================================
+[20:17:50] [INFO] ==================================================
+[20:17:50] [INFO] 🚀 Pipeline started at 20:17:50
+[20:17:50] [INFO] ==================================================
+[20:17:50] [INFO] 📖 Selected: [Qur'anic Dua] Qur'an 7:23
+[20:17:50] [INFO] ✍️  Caption generated.
+[20:17:52] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_201750.mp4
+[20:17:55] [ERROR] ❌ Dropbox upload failed: AuthError('028adb2d6ca44d3c8c5c4a1b69ac3a9a', AuthError('expired_access_token', None))
+[20:17:55] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[20:17:55] [INFO] ==================================================
+[20:17:55] [INFO] ✅ Dropbox/Instagram: FAILED
+[20:17:55] [INFO] ✅ YouTube:           SKIPPED
+[20:17:55] [INFO] 🌟 Cycle complete — بارك الله فيك
+[20:17:55] [INFO] ==================================================
+[20:18:05] [INFO] ==================================================
+[20:18:05] [INFO] 🚀 Pipeline started at 20:18:05
+[20:18:05] [INFO] ==================================================
+[20:18:05] [INFO] 📖 Selected: [Prophetic Dua] Sahih Muslim 2725
+[20:18:05] [INFO] ✍️  Caption generated.
+[20:18:07] [ERROR] ❌ Dropbox upload failed: module 'config' has no attribute 'DROPBOX_ACCESS_TOKEN'
+[20:18:07] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[20:18:07] [INFO] ==================================================
+[20:18:07] [INFO] ✅ Dropbox/Instagram: FAILED
+[20:18:07] [INFO] ✅ YouTube:           SKIPPED
+[20:18:07] [INFO] 🌟 Cycle complete — بارك الله فيك
+[20:18:07] [INFO] ==================================================
+[20:19:30] [INFO] ==================================================
+[20:19:30] [INFO] 🚀 Pipeline started at 20:19:30
+[20:19:30] [INFO] ==================================================
+[20:19:30] [INFO] 📖 Selected: [Tasbih] Sahih Bukhari 6682
+[20:19:30] [INFO] ✍️  Caption generated.
+[20:19:32] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_201930.mp4
+[20:19:35] [INFO] ✅ Video uploaded to Dropbox!
+[20:19:35] [INFO] 📝 Uploading caption file...
+[20:19:36] [INFO] ✅ Caption uploaded to Dropbox!
+[20:19:37] [ERROR] ❌ Dropbox upload failed: BadInputError('84d4f93a3d4a4a16903ecc6f69ac3b01', 'Error in call to API function "sharing/create_shared_link": Your app (ID: 6230323) is not permitted to access this endpoint because it does not have the required scope \'sharing.write\'. The owner of the app can enable the scope for the app using the Permissions tab on the App Console.')
+[20:19:37] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[20:19:37] [INFO] ==================================================
+[20:19:37] [INFO] ✅ Dropbox/Instagram: FAILED
+[20:19:37] [INFO] ✅ YouTube:           SKIPPED
+[20:19:37] [INFO] 🌟 Cycle complete — بارك الله فيك
+[20:19:37] [INFO] ==================================================
+[20:22:18] [INFO] ==================================================
+[20:22:18] [INFO] 🚀 Pipeline started at 20:22:18
+[20:22:18] [INFO] ==================================================
+[20:22:18] [INFO] 📖 Selected: [Qur'anic Dua] Qur'an 7:23
+[20:22:18] [INFO] ✍️  Caption generated.
+[20:22:20] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_202218.mp4
+[20:22:22] [INFO] ✅ Video uploaded to Dropbox!
+[20:22:22] [INFO] 📝 Uploading caption file...
+[20:22:24] [INFO] ✅ Caption uploaded to Dropbox!
+[20:22:26] [INFO] 🔗 Dropbox link: https://www.dropbox.com/scl/fi/m9r8trd5lulitajh2e9lb/noorpost_20260307_202218.mp4?rlkey=tx3c5r8xxwjolcx8fmavqxotv&dl=0
+[20:22:26] [INFO] ✅ Video ready in Dropbox — Make.com will post to Instagram!
+[20:22:26] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[20:22:26] [INFO] ==================================================
+[20:22:26] [INFO] ✅ Dropbox/Instagram: SUCCESS
+[20:22:26] [INFO] ✅ YouTube:           SKIPPED
+[20:22:26] [INFO] 🌟 Cycle complete — بارك الله فيك
+[20:22:26] [INFO] ==================================================
+[23:17:57] [INFO] ==================================================
+[23:17:57] [INFO] 🚀 Pipeline started at 23:17:57
+[23:17:57] [INFO] ==================================================
+[23:17:57] [INFO] 📖 Selected: [Tasbih] Sahih Muslim 2695
+[23:17:57] [INFO] ✍️  Caption generated.
+[23:17:59] [INFO] ☁️  Uploading video to Dropbox: /NoorPost/noorpost_20260307_231757.mp4
+[23:18:01] [INFO] ✅ Video uploaded to Dropbox!
+[23:18:01] [INFO] 📝 Uploading caption file...
+[23:18:03] [INFO] ✅ Caption uploaded to Dropbox!
+[23:18:04] [INFO] 🔗 Dropbox link: https://www.dropbox.com/scl/fi/ei0mw5vexudtx77jwfe2w/noorpost_20260307_231757.mp4?rlkey=ozqdnenfphxpng7klsh5anw29&dl=0
+[23:18:04] [INFO] ✅ Video ready in Dropbox — Make.com will post to Instagram!
+[23:18:04] [INFO] ⏭️  YouTube skipped (SKIP_YOUTUBE=True in config.py)
+[23:18:04] [INFO] ==================================================
+[23:18:04] [INFO] ✅ Dropbox/Instagram: SUCCESS
+[23:18:04] [INFO] ✅ YouTube:           SKIPPED
+[23:18:04] [INFO] 🌟 Cycle complete — بارك الله فيك
+[23:18:04] [INFO] ==================================================
