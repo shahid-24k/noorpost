@@ -19,7 +19,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install system dependencies
-        run: sudo apt-get install -y ffmpeg
+        run: sudo apt-get install -y ffmpeg imagemagick
 
       - name: Install Python dependencies
         run: pip install "moviepy==1.0.3" Pillow requests arabic-reshaper python-bidi APScheduler dropbox imageio imageio-ffmpeg
