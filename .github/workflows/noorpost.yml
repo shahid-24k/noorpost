@@ -19,10 +19,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install system dependencies
-        run: sudo apt-get install -y ffmpeg imagemagick
+        run: sudo apt-get install -y ffmpeg imagemagick libmagickwand-dev
 
       - name: Install Python dependencies
-        run: pip install "moviepy==1.0.3" Pillow requests arabic-reshaper python-bidi APScheduler dropbox imageio imageio-ffmpeg
+        run: pip install "moviepy==1.0.3" Pillow requests APScheduler dropbox imageio imageio-ffmpeg Wand
 
       - name: Create config.py
         run: |
