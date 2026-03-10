@@ -19,10 +19,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install system dependencies
-        run: sudo apt-get install -y ffmpeg imagemagick libmagickwand-dev
+        run: sudo apt-get install -y ffmpeg wkhtmltopdf
 
       - name: Install Python dependencies
-        run: pip install "moviepy==1.0.3" Pillow requests APScheduler dropbox imageio imageio-ffmpeg Wand
+        run: pip install "moviepy==1.0.3" Pillow requests APScheduler dropbox imageio imageio-ffmpeg
 
       - name: Create config.py
         run: |
@@ -47,7 +47,7 @@ jobs:
           echo "COLOR_GOLD_DIM = (122, 97, 40)" >> config.py
           echo "COLOR_WHITE = (232, 228, 217)" >> config.py
           echo "COLOR_DIM = (122, 135, 153)" >> config.py
-          echo "FONT_MODE = 'noto'" >> config.py
+          echo "FONT_MODE = 'amiri'" >> config.py
           echo "THEME_MODE = 'random'" >> config.py
           python -c "import config; print('KEY:', config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else 'EMPTY')"
 
