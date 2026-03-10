@@ -1,24 +1,26 @@
 """
-video_generator.py — Arabic rendered via ImageMagick (proper shaping engine)
-Latin text via Pillow. Composited together.
+video_generator.py — Arabic rendered via Wand (ImageMagick Python binding)
+Proper Arabic shaping, RTL, connected letters. Latin via Pillow.
 """
 
 import textwrap
 import os
 import random
-import subprocess
 from datetime import datetime
 from pathlib import Path
 import urllib.request
 
 from PIL import Image, ImageDraw, ImageFont
+from wand.image import Image as WandImage
+from wand.drawing import Drawing
+from wand.color import Color
 from moviepy.editor import ImageClip, AudioFileClip
 
 import config
 
 OUTPUT_DIR = Path("output_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
-FONTS_DIR = Path("assets/fonts")
+FONTS_DIR  = Path("assets/fonts")
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─────────────────────────────────────────────
@@ -48,6 +50,8 @@ THEMES = {
         "dim":      (122, 135, 153),
         "bg_hex":   "#080b10",
         "gold_hex": "#c9a84c",
+        "dim_hex":  "#7a8799",
+        "white_hex":"#e8e4d9",
     },
     "navy": {
         "bg":       (8,   18,  40),
@@ -57,6 +61,8 @@ THEMES = {
         "dim":      (100, 120, 160),
         "bg_hex":   "#08122a",
         "gold_hex": "#c0a040",
+        "dim_hex":  "#6478a0",
+        "white_hex":"#dce6ff",
     },
     "green": {
         "bg":       (6,   22,  14),
@@ -66,6 +72,8 @@ THEMES = {
         "dim":      ( 90, 130, 100),
         "bg_hex":   "#06160e",
         "gold_hex": "#b4a03c",
+        "dim_hex":  "#5a8264",
+        "white_hex":"#dcf0e1",
     },
     "pure-black": {
         "bg":       (  0,   0,   0),
@@ -75,6 +83,8 @@ THEMES = {
         "dim":      (160, 160, 160),
         "bg_hex":   "#000000",
         "gold_hex": "#dcc050",
+        "dim_hex":  "#a0a0a0",
+        "white_hex":"#ffffff",
     },
 }
 
@@ -108,80 +118,59 @@ def resolve_theme() -> dict:
 
 
 # ─────────────────────────────────────────────
-# IMAGEMAGICK ARABIC RENDERER
+# WAND ARABIC RENDERER — proper RTL shaping
 # ─────────────────────────────────────────────
 
-def render_arabic_imagemagick(text: str, font_path: str, font_size: int,
-                               color_hex: str, bg_hex: str,
-                               canvas_w: int) -> Image.Image:
-    """
-    Render Arabic text properly using ImageMagick.
-    ImageMagick uses FreeType + HarfBuzz for correct Arabic shaping & RTL.
-    """
-    out_path = "/tmp/arabic_render.png"
+def render_arabic_line_wand(text: str, font_path: str, font_size: int,
+                              color_hex: str, bg_hex: str, canvas_w: int) -> Image.Image:
+    """Render one Arabic line using Wand — proper RTL connected letters."""
+    height = int(font_size * 2.0)
+    with Drawing() as draw:
+        draw.font            = font_path
+        draw.font_size       = font_size
+        draw.fill_color      = Color(color_hex)
+        draw.gravity         = 'center'
+        draw.text_direction  = 'right_to_left'
+        draw.text_encoding   = 'UTF-8'
+        with WandImage(width=canvas_w, height=height,
+                       background=Color(bg_hex)) as wimg:
+            draw.text(0, 0, text)
+            draw(wimg)
+            wimg.trim()
+            wimg.save(filename='/tmp/_wand_line.png')
 
-    # Use pango markup for proper RTL/Arabic rendering
-    cmd = [
-        "convert",
-        "-size", f"{canvas_w}x400",
-        f"xc:{bg_hex}",
-        "-font", font_path,
-        "-pointsize", str(font_size),
-        "-fill", color_hex,
-        "-gravity", "Center",
-        "-annotate", "0", text,
-        "-trim",
-        "+repage",
-        out_path
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, timeout=15)
-        if result.returncode == 0 and Path(out_path).exists():
-            img = Image.open(out_path).copy()
-            # Add padding
-            padded = Image.new("RGB", (canvas_w, img.height + 20),
-                               tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
-            x = (canvas_w - img.width) // 2
-            padded.paste(img, (x, 10))
-            return padded
-    except Exception as e:
-        print(f"[Video] ImageMagick error: {e}")
-
-    # Fallback: blank image
-    blank = Image.new("RGB", (canvas_w, font_size + 20),
-                      tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
-    return blank
+    pil_img = Image.open('/tmp/_wand_line.png').convert('RGB')
+    # Center on canvas
+    canvas = Image.new('RGB', (canvas_w, pil_img.height + 16),
+                       tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
+    x = (canvas_w - pil_img.width) // 2
+    canvas.paste(pil_img, (max(0, x), 8))
+    return canvas
 
 
-def render_arabic_block_imagemagick(lines: list, font_path: str, font_size: int,
-                                     color_hex: str, bg_hex: str,
-                                     canvas_w: int) -> Image.Image:
-    """Render multiple Arabic lines and stack them vertically."""
-    line_imgs = []
-    for line in lines:
-        img = render_arabic_imagemagick(line, font_path, font_size,
-                                         color_hex, bg_hex, canvas_w)
-        line_imgs.append(img)
-
-    total_h = sum(img.height for img in line_imgs) + 8 * (len(line_imgs) - 1)
+def render_arabic_block(lines: list, font_path: str, font_size: int,
+                         color_hex: str, bg_hex: str, canvas_w: int,
+                         line_gap: int = 10) -> Image.Image:
+    """Render multiple Arabic lines stacked vertically."""
+    imgs = [render_arabic_line_wand(line, font_path, font_size,
+                                     color_hex, bg_hex, canvas_w)
+            for line in lines]
+    total_h = sum(i.height for i in imgs) + line_gap * (len(imgs) - 1)
     bg_rgb  = tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4))
-    result  = Image.new("RGB", (canvas_w, total_h), bg_rgb)
-
+    result  = Image.new('RGB', (canvas_w, total_h), bg_rgb)
     y = 0
-    for img in line_imgs:
-        result.paste(img, (0, y))
-        y += img.height + 8
-
+    for i in imgs:
+        result.paste(i, (0, y))
+        y += i.height + line_gap
     return result
 
 
-def split_arabic_by_words(text: str, max_words_per_line: int = 4) -> list:
-    """Simple word-based split for Arabic lines."""
+def split_arabic(text: str, words_per_line: int = 4) -> list:
+    """Split Arabic text into lines by word count."""
     words = text.split()
     lines = []
-    for i in range(0, len(words), max_words_per_line):
-        lines.append(" ".join(words[i:i+max_words_per_line]))
+    for i in range(0, len(words), words_per_line):
+        lines.append(" ".join(words[i:i+words_per_line]))
     return lines if lines else [text]
 
 
@@ -197,24 +186,23 @@ def measure(draw, text, font):
         return len(text) * 12, 36
 
 
-def draw_latin_centered(draw, lines, y, font, color, line_gap=12):
+def draw_latin(draw, lines, y, font, color, gap=12):
     W = config.VIDEO_WIDTH
     for line in lines:
         w, h = measure(draw, line, font)
-        x = max(50, (W - w) // 2)
-        draw.text((x, y), line, font=font, fill=color)
-        y += h + line_gap
+        draw.text(((W-w)//2, y), line, font=font, fill=color)
+        y += h + gap
     return y
 
 
-def draw_ornament(draw, cx, y, color, width=220):
-    draw.line([(cx - width, y), (cx + width, y)], fill=color, width=1)
+def ornament(draw, cx, y, color, width=220):
+    draw.line([(cx-width, y), (cx+width, y)], fill=color, width=1)
     draw.ellipse([cx-5, y-5, cx+5, y+5], fill=color)
-    draw.line([(cx - width//2, y-10), (cx + width//2, y-10)], fill=color, width=1)
+    draw.line([(cx-width//2, y-10), (cx+width//2, y-10)], fill=color, width=1)
 
 
-def wrap_latin(text: str, max_chars: int = 45) -> list:
-    lines = textwrap.wrap(text, width=max_chars)
+def wrap(text, n=45):
+    lines = textwrap.wrap(text, width=n)
     return lines if lines else [text]
 
 
@@ -223,91 +211,92 @@ def wrap_latin(text: str, max_chars: int = 45) -> list:
 # ─────────────────────────────────────────────
 
 def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
-    W, H    = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    cx      = W // 2
-    bg_hex  = theme["bg_hex"]
-    gold_hex= theme["gold_hex"]
+    W, H   = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    cx     = W // 2
+    BG     = theme["bg"]
+    GOLD   = theme["gold"]
+    GDIM   = theme["gold_dim"]
+    WHITE  = theme["white"]
+    DIM    = theme["dim"]
+    BH     = theme["bg_hex"]
+    GH     = theme["gold_hex"]
 
     try:
-        latin_lg = ImageFont.truetype(config.FONT_LATIN, 32)
-        latin_sm = ImageFont.truetype(config.FONT_LATIN, 20)
+        lg = ImageFont.truetype(config.FONT_LATIN, 32)
+        sm = ImageFont.truetype(config.FONT_LATIN, 20)
     except:
-        latin_lg = ImageFont.load_default()
-        latin_sm = ImageFont.load_default()
+        lg = sm = ImageFont.load_default()
 
-    img  = Image.new("RGB", (W, H), theme["bg"])
+    img  = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    # ── Background glow ──
+    # ── Glow ──
     for r in range(600, 0, -8):
-        ratio = (1 - r / 600) ** 2
-        c = tuple(int(theme["bg"][i] +
-                      (theme["gold"][i] - theme["bg"][i]) * ratio * 0.15)
-                  for i in range(3))
+        ratio = (1 - r/600)**2
+        c = tuple(int(BG[i] + (GOLD[i]-BG[i])*ratio*0.15) for i in range(3))
         draw.ellipse([cx-r, H//3-r//2, cx+r, H//3+r//2], fill=c)
 
-    # ── Double border ──
+    # ── Border ──
     p = 40
-    draw.rectangle([p, p, W-p, H-p], outline=theme["gold_dim"], width=1)
-    draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=theme["gold_dim"], width=1)
+    draw.rectangle([p, p, W-p, H-p], outline=GDIM, width=1)
+    draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=GDIM, width=1)
 
     y = 110
 
-    # ── Bismillah via ImageMagick ──
-    bism_lines = split_arabic_by_words("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", max_words_per_line=6)
-    bism_img   = render_arabic_block_imagemagick(bism_lines, font_path, 44,
-                                                  gold_hex, bg_hex, W - 100)
-    img.paste(bism_img, (50, y))
-    y += bism_img.height + 18
+    # ── Bismillah ──
+    bism = render_arabic_block(
+        split_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", words_per_line=6),
+        font_path, 44, GH, BH, W-100, line_gap=8
+    )
+    img.paste(bism, (50, y))
+    y += bism.height + 16
 
     draw = ImageDraw.Draw(img)
-    draw_ornament(draw, cx, y, theme["gold_dim"], width=300)
-    y += 28
+    ornament(draw, cx, y, GDIM, 300)
+    y += 26
 
     # ── Type badge ──
     badge = f"\u2014 {dua['type'].upper()} \u2014"
-    w, h  = measure(draw, badge, latin_sm)
-    draw.text(((W-w)//2, y), badge, font=latin_sm, fill=theme["gold_dim"])
-    y += h + 24
+    w, h  = measure(draw, badge, sm)
+    draw.text(((W-w)//2, y), badge, font=sm, fill=GDIM)
+    y += h + 22
 
-    draw_ornament(draw, cx, y, theme["gold_dim"], width=200)
-    y += 36
+    ornament(draw, cx, y, GDIM, 200)
+    y += 34
 
-    # ── Arabic dua via ImageMagick ──
-    arabic_lines = split_arabic_by_words(dua["arabic"], max_words_per_line=4)
-    arabic_img   = render_arabic_block_imagemagick(arabic_lines, font_path, 58,
-                                                    gold_hex, bg_hex, W - 100)
+    # ── Arabic dua ──
+    arabic_img = render_arabic_block(
+        split_arabic(dua["arabic"], words_per_line=4),
+        font_path, 58, GH, BH, W-100, line_gap=14
+    )
     img.paste(arabic_img, (50, y))
-    y += arabic_img.height + 28
+    y += arabic_img.height + 26
 
     draw = ImageDraw.Draw(img)
-    draw_ornament(draw, cx, y, theme["gold_dim"], width=250)
+    ornament(draw, cx, y, GDIM, 250)
     y += 24
 
     # ── Transliteration ──
-    translit_lines = wrap_latin(dua["transliteration"], max_chars=46)
-    y = draw_latin_centered(draw, translit_lines, y, latin_sm,
-                             theme["dim"], line_gap=8)
-    y += 20
+    y = draw_latin(draw, wrap(dua["transliteration"], 46),
+                   y, sm, DIM, gap=8)
+    y += 18
 
     # ── Translation ──
-    translation = f'\u201c{dua["translation"]}\u201d'
-    trans_lines  = wrap_latin(translation, max_chars=40)
-    y = draw_latin_centered(draw, trans_lines, y, latin_lg,
-                             theme["white"], line_gap=14)
-    y += 24
+    y = draw_latin(draw, wrap(f'\u201c{dua["translation"]}\u201d', 40),
+                   y, lg, WHITE, gap=14)
+    y += 22
 
-    draw_ornament(draw, cx, y, theme["gold_dim"], width=180)
+    ornament(draw, cx, y, GDIM, 180)
     y += 20
 
     # ── Source ──
-    src_lines = wrap_latin(f"Source: {dua['source']}", max_chars=52)
-    draw_latin_centered(draw, src_lines, y, latin_sm, theme["gold_dim"], line_gap=8)
+    draw_latin(draw, wrap(f"Source: {dua['source']}", 52),
+               y, sm, GDIM, gap=8)
 
     # ── Watermark ──
     wm   = "NoorPost \u00b7 Authentic Islamic Content"
-    w, h = measure(draw, wm, latin_sm)
-    draw.text(((W-w)//2, H-85), wm, font=latin_sm, fill=theme["gold_dim"])
+    w, h = measure(draw, wm, sm)
+    draw.text(((W-w)//2, H-85), wm, font=sm, fill=GDIM)
 
     return img
 
@@ -329,19 +318,17 @@ def generate_video(dua: dict) -> str:
     timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
     preview_path = OUTPUT_DIR / f"preview_{timestamp}.jpg"
     frame.save(str(preview_path), "JPEG", quality=85)
-    print(f"[Video] Preview saved: {preview_path.name}")
+    print(f"[Video] Preview: {preview_path.name}")
 
     try:
         from instagram import get_dropbox_client
         import dropbox as dbx_module
         dbx = get_dropbox_client()
         with open(str(preview_path), "rb") as f:
-            dbx.files_upload(
-                f.read(),
+            dbx.files_upload(f.read(),
                 f"/NoorPost/previews/preview_{timestamp}.jpg",
-                mode=dbx_module.files.WriteMode("overwrite")
-            )
-        print("[Video] Preview uploaded to Dropbox /NoorPost/previews/")
+                mode=dbx_module.files.WriteMode("overwrite"))
+        print("[Video] Preview uploaded to Dropbox!")
     except Exception as e:
         print(f"[Video] Preview upload skipped: {e}")
 
