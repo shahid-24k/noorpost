@@ -1,19 +1,18 @@
 """
-video_generator.py — Arabic rendered via Wand (ImageMagick Python binding)
-Proper Arabic shaping, RTL, connected letters. Latin via Pillow.
+video_generator.py — Arabic rendered via wkhtmltoimage (perfect RTL shaping)
+Latin text via Pillow. Full 1080x1920 Islamic video generator.
 """
 
 import textwrap
 import os
 import random
+import subprocess
+import json
 from datetime import datetime
 from pathlib import Path
 import urllib.request
 
 from PIL import Image, ImageDraw, ImageFont
-from wand.image import Image as WandImage
-from wand.drawing import Drawing
-from wand.color import Color
 from moviepy.editor import ImageClip, AudioFileClip
 
 import config
@@ -43,48 +42,52 @@ ARABIC_FONTS = {
 
 THEMES = {
     "dark-gold": {
-        "bg":       (8,   11,  16),
-        "gold":     (201, 168,  76),
-        "gold_dim": (122,  97,  40),
-        "white":    (232, 228, 217),
-        "dim":      (122, 135, 153),
-        "bg_hex":   "#080b10",
-        "gold_hex": "#c9a84c",
-        "dim_hex":  "#7a8799",
-        "white_hex":"#e8e4d9",
+        "bg":        (8,   11,  16),
+        "gold":      (201, 168,  76),
+        "gold_dim":  (122,  97,  40),
+        "white":     (232, 228, 217),
+        "dim":       (122, 135, 153),
+        "bg_hex":    "#080b10",
+        "gold_hex":  "#c9a84c",
+        "dim_hex":   "#7a8799",
+        "white_hex": "#e8e4d9",
+        "gdim_hex":  "#7a6128",
     },
     "navy": {
-        "bg":       (8,   18,  40),
-        "gold":     (192, 160,  64),
-        "gold_dim": (100,  80,  30),
-        "white":    (220, 230, 255),
-        "dim":      (100, 120, 160),
-        "bg_hex":   "#08122a",
-        "gold_hex": "#c0a040",
-        "dim_hex":  "#6478a0",
-        "white_hex":"#dce6ff",
+        "bg":        (8,   18,  40),
+        "gold":      (192, 160,  64),
+        "gold_dim":  (100,  80,  30),
+        "white":     (220, 230, 255),
+        "dim":       (100, 120, 160),
+        "bg_hex":    "#08122a",
+        "gold_hex":  "#c0a040",
+        "dim_hex":   "#6478a0",
+        "white_hex": "#dce6ff",
+        "gdim_hex":  "#64501e",
     },
     "green": {
-        "bg":       (6,   22,  14),
-        "gold":     (180, 160,  60),
-        "gold_dim": ( 90,  80,  30),
-        "white":    (220, 240, 225),
-        "dim":      ( 90, 130, 100),
-        "bg_hex":   "#06160e",
-        "gold_hex": "#b4a03c",
-        "dim_hex":  "#5a8264",
-        "white_hex":"#dcf0e1",
+        "bg":        (6,   22,  14),
+        "gold":      (180, 160,  60),
+        "gold_dim":  (90,   80,  30),
+        "white":     (220, 240, 225),
+        "dim":       (90,  130, 100),
+        "bg_hex":    "#06160e",
+        "gold_hex":  "#b4a03c",
+        "dim_hex":   "#5a8264",
+        "white_hex": "#dcf0e1",
+        "gdim_hex":  "#5a501e",
     },
     "pure-black": {
-        "bg":       (  0,   0,   0),
-        "gold":     (220, 190,  80),
-        "gold_dim": (130, 110,  45),
-        "white":    (255, 255, 255),
-        "dim":      (160, 160, 160),
-        "bg_hex":   "#000000",
-        "gold_hex": "#dcc050",
-        "dim_hex":  "#a0a0a0",
-        "white_hex":"#ffffff",
+        "bg":        (0,    0,   0),
+        "gold":      (220, 190,  80),
+        "gold_dim":  (130, 110,  45),
+        "white":     (255, 255, 255),
+        "dim":       (160, 160, 160),
+        "bg_hex":    "#000000",
+        "gold_hex":  "#dcc050",
+        "dim_hex":   "#a0a0a0",
+        "white_hex": "#ffffff",
+        "gdim_hex":  "#826e2d",
     },
 }
 
@@ -118,64 +121,64 @@ def resolve_theme() -> dict:
 
 
 # ─────────────────────────────────────────────
-# WAND ARABIC RENDERER — proper RTL shaping
+# WKHTMLTOIMAGE ARABIC RENDERER
 # ─────────────────────────────────────────────
 
-def render_arabic_line_wand(text: str, font_path: str, font_size: int,
-                              color_hex: str, bg_hex: str, canvas_w: int) -> Image.Image:
-    """Render one Arabic line using Wand — proper RTL connected letters."""
-    height = int(font_size * 2.0)
-    with Drawing() as draw:
-        draw.font            = font_path
-        draw.font_size       = font_size
-        draw.fill_color      = Color(color_hex)
-        draw.gravity         = 'center'
-        draw.text_direction  = 'right_to_left'
-        draw.text_encoding   = 'UTF-8'
-        with WandImage(width=canvas_w, height=height,
-                       background=Color(bg_hex)) as wimg:
-            draw.text(0, 0, text)
-            draw(wimg)
-            wimg.trim()
-            wimg.save(filename='/tmp/_wand_line.png')
+def render_arabic_html(text: str, font_path: str, font_size: int,
+                        color_hex: str, bg_hex: str, canvas_w: int) -> Image.Image:
+    """
+    Render Arabic text via wkhtmltoimage using local font.
+    Returns a PIL Image with the rendered Arabic text.
+    """
+    abs_font = str(Path(font_path).resolve())
 
-    pil_img = Image.open('/tmp/_wand_line.png').convert('RGB')
-    # Center on canvas
-    canvas = Image.new('RGB', (canvas_w, pil_img.height + 16),
-                       tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
-    x = (canvas_w - pil_img.width) // 2
-    canvas.paste(pil_img, (max(0, x), 8))
-    return canvas
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+@font-face {{ font-family:'ArabicFont'; src:url('{abs_font}'); }}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:{bg_hex}; width:{canvas_w}px; overflow:hidden; }}
+p {{
+  font-family:'ArabicFont',serif;
+  font-size:{font_size}px;
+  color:{color_hex};
+  direction:rtl;
+  text-align:center;
+  padding:10px 20px;
+  line-height:1.8;
+  word-spacing:4px;
+}}
+</style></head>
+<body><p>{text}</p></body></html>"""
 
+    html_path = "/tmp/_arabic_render.html"
+    img_path  = "/tmp/_arabic_render.png"
 
-def render_arabic_block(lines: list, font_path: str, font_size: int,
-                         color_hex: str, bg_hex: str, canvas_w: int,
-                         line_gap: int = 10) -> Image.Image:
-    """Render multiple Arabic lines stacked vertically."""
-    imgs = [render_arabic_line_wand(line, font_path, font_size,
-                                     color_hex, bg_hex, canvas_w)
-            for line in lines]
-    total_h = sum(i.height for i in imgs) + line_gap * (len(imgs) - 1)
-    bg_rgb  = tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4))
-    result  = Image.new('RGB', (canvas_w, total_h), bg_rgb)
-    y = 0
-    for i in imgs:
-        result.paste(i, (0, y))
-        y += i.height + line_gap
-    return result
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
 
+    try:
+        result = subprocess.run([
+            "wkhtmltoimage",
+            "--width", str(canvas_w),
+            "--quality", "100",
+            "--format", "png",
+            html_path, img_path
+        ], capture_output=True, timeout=20)
 
-def split_arabic(text: str, words_per_line: int = 4) -> list:
-    """Split Arabic text into lines by word count."""
-    words = text.split()
-    lines = []
-    for i in range(0, len(words), words_per_line):
-        lines.append(" ".join(words[i:i+words_per_line]))
-    return lines if lines else [text]
+        if Path(img_path).exists():
+            img = Image.open(img_path).convert("RGB")
+            return img
+    except Exception as e:
+        print(f"[Video] wkhtmltoimage error: {e}")
+
+    # Fallback: blank image
+    return Image.new("RGB", (canvas_w, font_size + 20),
+                     tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
 
 
 # ─────────────────────────────────────────────
-# PILLOW LATIN HELPERS
+# PILLOW LATIN + DECORATION HELPERS
 # ─────────────────────────────────────────────
 
 def measure(draw, text, font):
@@ -211,15 +214,13 @@ def wrap(text, n=45):
 # ─────────────────────────────────────────────
 
 def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
-    W, H   = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    cx     = W // 2
-    BG     = theme["bg"]
-    GOLD   = theme["gold"]
-    GDIM   = theme["gold_dim"]
-    WHITE  = theme["white"]
-    DIM    = theme["dim"]
-    BH     = theme["bg_hex"]
-    GH     = theme["gold_hex"]
+    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    cx   = W // 2
+    BG   = theme["bg"]
+    GOLD = theme["gold"]
+    GDIM = theme["gold_dim"]
+    BH   = theme["bg_hex"]
+    GH   = theme["gold_hex"]
 
     try:
         lg = ImageFont.truetype(config.FONT_LATIN, 32)
@@ -230,26 +231,26 @@ def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
     img  = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    # ── Glow ──
+    # ── Background glow ──
     for r in range(600, 0, -8):
-        ratio = (1 - r/600)**2
+        ratio = (1 - r/600) ** 2
         c = tuple(int(BG[i] + (GOLD[i]-BG[i])*ratio*0.15) for i in range(3))
         draw.ellipse([cx-r, H//3-r//2, cx+r, H//3+r//2], fill=c)
 
-    # ── Border ──
+    # ── Double border ──
     p = 40
     draw.rectangle([p, p, W-p, H-p], outline=GDIM, width=1)
     draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=GDIM, width=1)
 
-    y = 110
+    y = 100
 
-    # ── Bismillah ──
-    bism = render_arabic_block(
-        split_arabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", words_per_line=6),
-        font_path, 44, GH, BH, W-100, line_gap=8
+    # ── Bismillah via wkhtmltoimage ──
+    bism_img = render_arabic_html(
+        "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+        font_path, 44, GH, BH, W
     )
-    img.paste(bism, (50, y))
-    y += bism.height + 16
+    img.paste(bism_img, (0, y))
+    y += bism_img.height + 14
 
     draw = ImageDraw.Draw(img)
     ornament(draw, cx, y, GDIM, 300)
@@ -262,32 +263,32 @@ def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
     y += h + 22
 
     ornament(draw, cx, y, GDIM, 200)
-    y += 34
+    y += 32
 
-    # ── Arabic dua ──
-    arabic_img = render_arabic_block(
-        split_arabic(dua["arabic"], words_per_line=4),
-        font_path, 58, GH, BH, W-100, line_gap=14
+    # ── Arabic dua via wkhtmltoimage ──
+    arabic_img = render_arabic_html(
+        dua["arabic"],
+        font_path, 54, GH, BH, W
     )
-    img.paste(arabic_img, (50, y))
-    y += arabic_img.height + 26
+    img.paste(arabic_img, (0, y))
+    y += arabic_img.height + 24
 
     draw = ImageDraw.Draw(img)
     ornament(draw, cx, y, GDIM, 250)
-    y += 24
+    y += 22
 
     # ── Transliteration ──
     y = draw_latin(draw, wrap(dua["transliteration"], 46),
-                   y, sm, DIM, gap=8)
+                   y, sm, theme["dim"], gap=8)
     y += 18
 
     # ── Translation ──
     y = draw_latin(draw, wrap(f'\u201c{dua["translation"]}\u201d', 40),
-                   y, lg, WHITE, gap=14)
+                   y, lg, theme["white"], gap=14)
     y += 22
 
     ornament(draw, cx, y, GDIM, 180)
-    y += 20
+    y += 18
 
     # ── Source ──
     draw_latin(draw, wrap(f"Source: {dua['source']}", 52),
@@ -328,7 +329,7 @@ def generate_video(dua: dict) -> str:
             dbx.files_upload(f.read(),
                 f"/NoorPost/previews/preview_{timestamp}.jpg",
                 mode=dbx_module.files.WriteMode("overwrite"))
-        print("[Video] Preview uploaded to Dropbox!")
+        print("[Video] Preview uploaded to Dropbox /NoorPost/previews/")
     except Exception as e:
         print(f"[Video] Preview upload skipped: {e}")
 
