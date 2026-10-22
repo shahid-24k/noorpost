@@ -1,0 +1,46 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*.class
+
+# Environments & Secrets
+.env
+.venv
+env/
+venv/
+*.pkl
+credentials.json
+token.json
+client_secret*.json
+
+# Testing & Linters
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs
+logs/*.log
+*.log
+
+# Local media outputs
+output/
+output_videos/
+*.mp4
+*.wav
+*.mp3
+
+# Runtime Cache & State
+assets/cache/
+assets/state/
+
+# Local databases
+*.db
+*.sqlite3
+
+# IDE & OS files
+.gemini/
+Thumbs.db
+Desktop.ini
+.DS_Store

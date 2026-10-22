@@ -1,63 +1,181 @@
-name: NoorPost Agent
+name: NoorPost Ultimate Production Agent
 
 on:
   schedule:
+    # 08:00 AM IST (02:30 UTC)
     - cron: '30 2 * * *'
+    # 09:00 PM IST (15:30 UTC)
     - cron: '30 15 * * *'
   workflow_dispatch:
+    inputs:
+      content_type:
+        description: "Type of Islamic content to generate"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - hadith_sahih
+          - daily_duas
+          - quranic_verses
+          - friday_reminders
+          - short_reminders
+          - repurpose
+      theme:
+        description: "Visual theme"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - midnight-gold
+          - emerald-serenity
+          - minimal-white
+          - peaceful-nature
+          - reflective-night
+          - masjid-elegance
+          - ramadan-eid
+      preset:
+        description: "Rendering preset"
+        required: false
+        default: "balanced"
+        type: choice
+        options:
+          - fast
+          - balanced
+          - high_quality
+      duration:
+        description: "Video duration in seconds"
+        required: false
+        default: "15"
+      enable_nasheed:
+        description: "Attach authorized Halal Tunes nasheed highlight"
+        required: false
+        default: true
+        type: boolean
+      dry_run:
+        description: "Dry run mode (generate video preview without publishing to Dropbox)"
+        required: false
+        default: false
+        type: boolean
+      repurpose_url:
+        description: "Authorized YouTube URL (required if content_type is repurpose)"
+        required: false
+        default: ""
+      confirm_rights:
+        description: "Confirm authorization to repurpose YouTube source"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: noorpost-production
+  cancel-in-progress: false
 
 jobs:
-  post:
+  publish_reel:
+    name: Generate & Publish Islamic Reel
     runs-on: ubuntu-latest
+
+    env:
+      DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+      DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+      DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+      DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
+      SUNNAH_API_KEY: ${{ secrets.SUNNAH_API_KEY }}
+      TIMEZONE: "Asia/Kolkata"
+
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install system dependencies
+      - name: Install System Dependencies (FFmpeg)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
-          wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.jammy_amd64.deb
-          sudo apt-get install -y ./wkhtmltox_0.12.6.1-3.jammy_amd64.deb --fix-missing
-          wkhtmltoimage --version
+          ffmpeg -version
 
-      - name: Install Python dependencies
-        run: pip install "moviepy==1.0.3" Pillow requests APScheduler dropbox imageio imageio-ffmpeg
-
-      - name: Create config.py
+      - name: Install Python Dependencies
         run: |
-          echo "DROPBOX_APP_KEY = '${{ secrets.DROPBOX_APP_KEY }}'" > config.py
-          echo "DROPBOX_APP_SECRET = '${{ secrets.DROPBOX_APP_SECRET }}'" >> config.py
-          echo "DROPBOX_REFRESH_TOKEN = '${{ secrets.DROPBOX_REFRESH_TOKEN }}'" >> config.py
-          echo "DROPBOX_ACCESS_TOKEN = ''" >> config.py
-          echo "SKIP_YOUTUBE = True" >> config.py
-          echo "YT_CREDENTIALS_FILE = 'credentials.json'" >> config.py
-          echo "YT_TOKEN_FILE = 'yt_token.pkl'" >> config.py
-          echo "POST_TIMES = [{'hour': 8, 'minute': 0}, {'hour': 21, 'minute': 0}]" >> config.py
-          echo "TIMEZONE = 'Asia/Kolkata'" >> config.py
-          echo "VIDEO_WIDTH = 1080" >> config.py
-          echo "VIDEO_HEIGHT = 1920" >> config.py
-          echo "VIDEO_DURATION = 15" >> config.py
-          echo "VIDEO_FPS = 24" >> config.py
-          echo "FONT_ARABIC = 'assets/fonts/Amiri-Regular.ttf'" >> config.py
-          echo "FONT_BOLD = 'assets/fonts/Amiri-Bold.ttf'" >> config.py
-          echo "FONT_LATIN = 'assets/fonts/NotoSans-VariableFont_wdth,wght.ttf'" >> config.py
-          echo "COLOR_BG = (8, 11, 16)" >> config.py
-          echo "COLOR_GOLD = (201, 168, 76)" >> config.py
-          echo "COLOR_GOLD_DIM = (122, 97, 40)" >> config.py
-          echo "COLOR_WHITE = (232, 228, 217)" >> config.py
-          echo "COLOR_DIM = (122, 135, 153)" >> config.py
-          echo "FONT_MODE = 'amiri'" >> config.py
-          echo "THEME_MODE = 'random'" >> config.py
-          python -c "import config; print('KEY:', config.DROPBOX_APP_KEY[:5] if config.DROPBOX_APP_KEY else 'EMPTY')"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Create directories
-        run: mkdir -p assets/audio output_videos logs
+      - name: Validate Essential Credentials
+        if: ${{ !(github.event.inputs.dry_run == 'true') }}
+        run: |
+          if [ -z "$DROPBOX_REFRESH_TOKEN" ] && [ -z "$DROPBOX_ACCESS_TOKEN" ]; then
+            echo "::error::Missing required Dropbox secret. Set DROPBOX_REFRESH_TOKEN (along with DROPBOX_APP_KEY and DROPBOX_APP_SECRET) or DROPBOX_ACCESS_TOKEN in GitHub Repository Secrets."
+            exit 1
+          fi
 
-      - name: Run NoorPost Agent
-        run: python main.py --now
+      - name: Pull Persistent State from Dropbox
+        run: |
+          python main.py --sync-state-down
+
+      - name: Execute Content Generation & Publishing
+        run: |
+          # Build one-shot execution command
+          CMD="python main.py"
+
+          # Determine Run Mode
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --preview"
+          else
+            CMD="$CMD --now"
+          fi
+
+          # Content Type routing
+          CONTENT_TYPE="${{ github.event.inputs.content_type }}"
+          if [ "$CONTENT_TYPE" = "hadith_sahih" ]; then
+            CMD="$CMD --hadith-sahih"
+          elif [ "$CONTENT_TYPE" = "repurpose" ]; then
+            REPURPOSE_URL="${{ github.event.inputs.repurpose_url }}"
+            if [ -n "$REPURPOSE_URL" ]; then
+              CMD="python main.py --repurpose-url '$REPURPOSE_URL'"
+              if [ "${{ github.event.inputs.confirm_rights }}" = "true" ]; then
+                CMD="$CMD --confirm-rights"
+              fi
+            else
+              echo "::error::repurpose_url must be provided when content_type is repurpose"
+              exit 1
+            fi
+          elif [ "$CONTENT_TYPE" != "auto" ] && [ -n "$CONTENT_TYPE" ]; then
+            CMD="$CMD --category $CONTENT_TYPE"
+          fi
+
+          # Visual Theme routing
+          THEME="${{ github.event.inputs.theme }}"
+          if [ "$THEME" != "auto" ] && [ -n "$THEME" ]; then
+            CMD="$CMD --theme $THEME"
+          fi
+
+          # Preset routing
+          PRESET="${{ github.event.inputs.preset }}"
+          if [ -n "$PRESET" ]; then
+            CMD="$CMD --preset $PRESET"
+          fi
+
+          # Duration routing
+          DURATION="${{ github.event.inputs.duration }}"
+          if [ -n "$DURATION" ]; then
+            CMD="$CMD --duration $DURATION"
+          fi
+
+          # Nasheed audio flag
+          if [ "${{ github.event.inputs.enable_nasheed }}" = "false" ]; then
+            CMD="$CMD --no-nasheed"
+          fi
+
+          echo "Executing: $CMD"
+          eval $CMD
+
+      - name: Push Persistent State to Dropbox
+        if: always()
+        run: |
+          python main.py --sync-state-up

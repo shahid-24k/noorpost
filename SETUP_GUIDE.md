@@ -1,215 +1,366 @@
-# NOORPOST — COMPLETE SETUP GUIDE
+# NOORPOST ULTIMATE — SETUP & OPERATING GUIDE
 بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
 
-This guide walks you through everything from zero to fully automated
-Islamic content posting on Instagram + YouTube.
+NoorPost Ultimate is an intelligent, authentic Islamic content creation and automated video repurposing engine.
+It generates high-definition 1080x1920 vertical videos (9:16) for Instagram Reels and YouTube Shorts via:
+1. **Islamic Content Engine**: Verified daily duas, adhkar, Quranic verses, and Hadith across 13 canonical categories.
+2. **Video Repurposing Engine**: Automated slicing of long-form Islamic lectures, khutbahs, and recitations into engaging, subtitled vertical Reels with thumbnails and captions, delivered directly to Dropbox for automated Make.com Instagram publishing.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## STEP 0 — INSTALL PYTHON & DEPENDENCIES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-1. Make sure Python 3.9+ is installed:
-   python --version
+## 📋 TABLE OF CONTENTS
+1. [Prerequisites & Installation](#1-prerequisites--installation)
+2. [Environment Configuration (.env)](#2-environment-configuration-env)
+3. [The Dropbox & Make.com Publishing Workflow](#3-the-dropbox--makecom-publishing-workflow)
+4. [Video Repurposing Engine (Long Video -> Vertical Reels)](#4-video-repurposing-engine-long-video---vertical-reels)
+5. [Reframing Strategies (16:9 to 9:16)](#5-reframing-strategies-169-to-916)
+6. [Subtitles & Arabic Text Shaping](#6-subtitles--arabic-text-shaping)
+7. [Thumbnail Covers & Caption Packaging](#7-thumbnail-covers--caption-packaging)
+8. [Queue Management & Duplicate Prevention](#8-queue-management--duplicate-prevention)
+9. [13 Canonical Content Categories](#9-13-canonical-content-categories)
+10. [Visual Themes & Presets](#10-visual-themes--presets)
+11. [Command-Line Reference (CLI)](#11-command-line-reference-cli)
+12. [Automated Testing & Verification](#12-automated-testing--verification)
 
-2. Install all dependencies:
-   pip install -r requirements.txt
+---
 
-3. Download fonts (required for beautiful Arabic text):
-   - Amiri font:    https://fonts.google.com/specimen/Amiri
-     → Download → extract → copy Amiri-Regular.ttf + Amiri-Bold.ttf
-     → paste into:  assets/fonts/
+## 1. PREREQUISITES & INSTALLATION
 
-   - Noto Sans:     https://fonts.google.com/specimen/Noto+Sans
-     → Download → extract → copy NotoSans-Regular.ttf
-     → paste into:  assets/fonts/
+### System Requirements:
+- Windows 10/11 (or macOS / Linux)
+- Python 3.9+ (Python 3.10+ recommended)
+- FFmpeg 6.0+ (with libx264, libass, libfribidi)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SECTION 1 — INSTAGRAM TOKEN SETUP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### Step 1: Open Windows PowerShell
+Navigate to the project root:
+```powershell
+cd D:\noorpost
+```
 
-### 1A — Convert Instagram to Professional Account
-1. Instagram app → Profile → Menu → Settings and Privacy
-2. Account type and tools → Switch to Professional Account
-3. Choose: Creator (recommended for content creators)
+### Step 2: Set up a Python Virtual Environment (Recommended)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
-### 1B — Create Meta Developer App
-1. Go to: https://developers.facebook.com
-2. Log in with your Facebook account (linked to Instagram)
-3. My Apps → Create App → Other → Next
-4. Type: Business → Next
-5. App Name: NoorPost → Create App
+### Step 3: Install Required Dependencies
+```powershell
+pip install -r requirements.txt
+```
 
-### 1C — Add Instagram Product
-1. Inside app dashboard → scroll to Products → Instagram → Set Up
-2. Left sidebar → Instagram → API Setup with Instagram Login
-3. Click "Add Instagram Account" → log in with your Instagram → Authorize
+*Key dependencies:*
+- `yt-dlp` (Authorized video & transcript ingestion)
+- `Pillow` (HD graphic rendering & thumbnail composition)
+- `arabic-reshaper` & `python-bidi` (Native Arabic cursive shaping and RTL layout)
+- `moviepy` & `FFmpeg` (Video cutting, blurred background reframing, audio multiplexing)
+- `APScheduler` (Background automation scheduler)
+- `python-dotenv` (Secure environment configuration)
+- `dropbox` (Cloud distribution for Make.com / Instagram)
 
-### 1D — Add Yourself as Tester
-1. Left sidebar → App Roles → Roles
-2. Add People → search your Facebook name → role: Tester → Submit
-3. On your PHONE: Instagram → Settings → Website permissions
-   → Tester Invites → Accept your app
+---
 
-### 1E — Generate Access Token
-1. Left sidebar → Instagram → API Setup
-2. Click "Generate Token" next to your account → Allow
-3. COPY the token (very long string starting with IGAA...)
-   ⚠️ SAVE IT — you will not see it again!
+## 2. ENVIRONMENT CONFIGURATION (.env)
 
-### 1F — Get Your Instagram User ID
-Open this URL in browser (replace YOUR_TOKEN):
-https://graph.facebook.com/v21.0/me?fields=id,name&access_token=YOUR_TOKEN
+```ini
+# --- Dropbox & Make.com (Instagram Auto-Publishing) ---
+DROPBOX_APP_KEY=your_dropbox_app_key
+DROPBOX_APP_SECRET=your_dropbox_app_secret
+DROPBOX_REFRESH_TOKEN=your_dropbox_refresh_token
+DROPBOX_ACCESS_TOKEN=your_dropbox_access_token
+DROPBOX_FOLDER=/NoorPost
 
-The "id" value is your IG_USER_ID.
+# --- Automation Timing ---
+TIMEZONE=Asia/Kolkata
+POST_TIMES=08:00, 13:00, 17:00, 21:00
 
-### 1G — Make Token Long-Lived (60 days)
-Open this URL in browser (replace all values):
-https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=YOUR_APP_ID&client_secret=YOUR_APP_SECRET&fb_exchange_token=YOUR_SHORT_TOKEN
+# --- Video Presets & Appearance ---
+DEFAULT_THEME=midnight-gold
+DEFAULT_LAYOUT=dua
+DEFAULT_PRESET=balanced
+VIDEO_DURATION=15
+SHOW_TRANSLITERATION=True
+ENABLE_ANIMATIONS=True
 
-App ID and App Secret: your app dashboard → Settings → Basic
+# --- Safety & Approval Controls ---
+REQUIRE_APPROVAL=False
+PREVIEW_ONLY=False
+SKIP_YOUTUBE=True
+```
 
-### 1H — Paste Into config.py
-IG_ACCESS_TOKEN = "your_long_lived_token"
-IG_USER_ID      = "your_user_id"
-IG_APP_ID       = "your_app_id"
-IG_APP_SECRET   = "your_app_secret"
+---
 
-### Token Refresh
-Tokens expire every 60 days. NoorPost auto-refreshes them — no action needed.
-But if it ever fails, just repeat Step 1E–1G.
+## 3. THE DROPBOX & MAKE.COM PUBLISHING WORKFLOW
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SECTION 2 — CLOUDINARY SETUP (Free Video Hosting)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NoorPost Ultimate preserves your existing Dropbox + Make.com publishing pipeline:
 
-Instagram API does NOT accept local files — video must be at a public URL.
-Cloudinary gives you free hosting (25GB/month free).
+```
+[AUTHORIZED VIDEO SOURCE / LECTURE]
+                │
+                ▼
+      [NOORPOST ULTIMATE]
+                │
+   ├── 1. Transcript-Based Segment Selection (30-60s)
+   ├── 2. 1080x1920 Vertical Reframing (blur_fill / center_crop)
+   ├── 3. Mobile-Safe Subtitles (SRT/ASS with Arabic shaping)
+   ├── 4. Themed 1080x1920 Thumbnail (preview_<name>.jpg)
+   └── 5. Attributed Caption & Hashtags (<name>_caption.txt)
+                │
+                ▼
+      [DROPBOX (/NoorPost)]
+   ├── /NoorPost/<video>.mp4          (Final vertical Reel)
+   ├── /NoorPost/<video>_caption.txt  (Caption & hashtags)
+   └── /NoorPost/previews/<thumb>.jpg (Thumbnail reference)
+                │
+                ▼
+      [EXISTING MAKE.COM SCENARIO]
+   Watches /NoorPost folder -> Reads video & caption -> Publishes to Instagram Reels
+```
 
-1. Go to: https://cloudinary.com
-2. Sign Up Free (use email or Google)
-3. After login → Dashboard shows:
-   - Cloud Name
-   - API Key
-   - API Secret
-4. Paste into config.py:
-   CLOUDINARY_CLOUD_NAME = "your_cloud_name"
-   CLOUDINARY_API_KEY    = "your_api_key"
-   CLOUDINARY_API_SECRET = "your_api_secret"
+### Important Integration Rules:
+1. **Never alter `DROPBOX_FOLDER`** unless your Make.com scenario is updated to watch the new path.
+2. **File Pairing**: NoorPost uploads `<name>.mp4` and `<name>_caption.txt` in the exact folder structure Make.com expects.
+3. **Thumbnail Isolation**: Preview thumbnails are placed in `/NoorPost/previews/` to prevent folder-watch triggers from mistaking a JPEG for a video file.
+4. **Public Shared Links**: Shared links are generated automatically with `dbx.sharing_create_shared_link_with_settings()` for direct Instagram media ingestion.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SECTION 3 — YOUTUBE OAUTH SETUP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-### 3A — Create Google Cloud Project
-1. Go to: https://console.cloud.google.com
-2. Click "Select a project" (top bar) → New Project
-3. Name: NoorPost → Create
+## 4. VIDEO REPURPOSING ENGINE (LONG VIDEO -> VERTICAL REELS)
 
-### 3B — Enable YouTube Data API
-1. Left menu → APIs & Services → Library
-2. Search: YouTube Data API v3 → Click it → Enable
+### Basic Usage:
 
-### 3C — Create OAuth Credentials
-1. APIs & Services → Credentials → Create Credentials
-2. Choose: OAuth client ID
-3. If asked to configure consent screen:
-   - User Type: External → Create
-   - App name: NoorPost
-   - Your email in support + developer fields
-   - Save and Continue (skip scopes for now) → Back to Dashboard
-4. Create Credentials → OAuth client ID again
-5. Application type: Desktop app → Name: NoorPost → Create
-6. Click DOWNLOAD JSON → rename file to: credentials.json
-7. Place credentials.json in your NoorPost project folder
+#### 1. Repurposing an Authorized YouTube Lecture:
+```powershell
+python main.py --repurpose-url "https://www.youtube.com/watch?v=EXAMPLE" --confirm-rights
+```
 
-### 3D — Add Test User (important!)
-1. APIs & Services → OAuth consent screen
-2. Scroll to "Test users" → Add Users
-3. Add your Gmail address → Save
+#### 2. Repurposing a Local Video File:
+```powershell
+python main.py --repurpose-file "D:\lectures\tafseer_fatihah.mp4"
+```
 
-### 3E — First Run Authentication
-Run this ONCE to authenticate:
-   python main.py --now
+#### 3. Batch Repurposing:
+Create a text file `batch.txt` containing URLs or file paths:
+```powershell
+python main.py --batch batch.txt --confirm-rights
+```
 
-A browser window will open → log in with your Google account → Allow
-This creates yt_token.pkl automatically.
-After this, YouTube uploads work forever without needing to log in again.
+#### 4. Preview Segments Before Rendering:
+```powershell
+python main.py --repurpose-url "https://www.youtube.com/watch?v=EXAMPLE" --confirm-rights --preview-clips
+```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## STEP 4 — TEST EVERYTHING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-Run one full test cycle (posts immediately):
-   python main.py --now
+## 5. REFRAMING STRATEGIES (16:9 TO 9:16)
 
-Check your Instagram and YouTube — you should see the post within 2-3 minutes.
+When converting wide landscape video to vertical 1080x1920:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## STEP 5 — START THE SCHEDULER (daily auto-posting)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+| Strategy | Flag | Description | Ideal For |
+|---|---|---|---|
+| `blur_fill` | `--reframing blur_fill` (Default) | Scales original video to fit 1080 width; backgrounds it with a blurred, darkened 1080x1920 copy | Lectures with slides, wide mosque shots, multiple speakers |
+| `center_crop` | `--reframing center_crop` | Scales height to 1920 and center-crops 1080 width | Centered podium speaker or single lecturer |
+| `custom_crop` | `--reframing custom_crop` | Uses custom X offset (e.g. speaker stands on left/right third) | Stage presentations with offset podiums |
+| `fit_themed` | `--reframing fit_themed` | Centers video inside a 1080x1920 canvas using one of the 7 NoorPost Islamic themes | Educational clips with top/bottom decorative borders |
 
-   python main.py
+---
 
-This runs forever, posting at 8AM, 1PM, 5PM, 9PM (IST) daily.
-Keep the terminal open (or run in background — see below).
+## 6. SUBTITLES & ARABIC TEXT SHAPING
 
-### Run in background (so you can close terminal):
-   # Windows:
-   pythonw main.py
+- **Automatic Extraction**: Uses available subtitles or transcripts from YouTube (`en`, `ar`) or local `.vtt` / `.srt` files alongside the video.
+- **Mobile Safe Zones**: Subtitles are positioned with a 320px bottom margin so Instagram caption and audio badges never obscure the text.
+- **Arabic Text Shaping**: Automatically reshaped and rendered RTL using `Amiri-Regular.ttf`.
+- **Face Occlusion Prevention**: Maximum 32–34 characters per line, at most 2 lines per cue.
+- **Disable Subtitles**: Add `--no-subtitles` if you want clean video without burned text.
 
-   # Or use a simple batch file (Windows):
-   Create run_noorpost.bat with:
-   @echo off
-   python main.py
-   pause
+---
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## PROJECT FOLDER STRUCTURE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 7. THUMBNAIL COVERS & CAPTION PACKAGING
 
-noorpost/
-├── main.py              ← Entry point (run this)
-├── config.py            ← Your credentials (KEEP PRIVATE)
-├── pipeline.py          ← Master pipeline + logger + scheduler
-├── video_generator.py   ← Frame rendering + MP4 creation
-├── instagram.py         ← Instagram Graph API uploader
-├── youtube.py           ← YouTube Data API uploader
-├── duas_db.py           ← 20+ authentic duas database
-├── requirements.txt     ← Python dependencies
-├── credentials.json     ← YouTube OAuth (you download this)
-├── yt_token.pkl         ← YouTube token (auto-created)
-├── assets/
-│   └── fonts/
-│       ├── Amiri-Regular.ttf   ← You download this
-│       ├── Amiri-Bold.ttf      ← You download this
-│       └── NotoSans-Regular.ttf ← You download this
-├── output_videos/       ← Generated MP4s saved here
-└── logs/                ← Daily log files saved here
+Each generated clip receives a complete publishing package:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## COMMON ERRORS & FIXES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. **Thumbnail Cover (`output_videos/previews/preview_<name>.jpg`)**:
+   - 1080x1920 vertical format.
+   - Keyframe extracted from speech.
+   - High-contrast card with Islamic star ornaments matching the selected theme.
+   - Bold, wrapped headline.
+2. **Social Caption (`output_videos/<name>_caption.txt`)**:
+   - Structured headline.
+   - Speaker & lecture attribution (`🎙️ Speaker: ... | 📖 Source: ...`).
+   - Core takeaway quote.
+   - Curated category hashtags.
+   - Respectful call to action.
 
-| Error                          | Fix                                          |
-|-------------------------------|----------------------------------------------|
-| Insufficient Developer Role    | Accept tester invite in Instagram app        |
-| Token expired                  | Re-run Step 1E–1G (auto-refresh handles it)  |
-| Cloudinary upload failed       | Check API key/secret in config.py            |
-| credentials.json not found     | Download from Google Cloud → place in folder |
-| Font not found                 | Download fonts → place in assets/fonts/      |
-| moviepy ffmpeg error           | pip install imageio-ffmpeg                   |
-| YouTube quota exceeded         | Free quota = 6 uploads/day. Reduce POST_TIMES|
+---
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## SECURITY REMINDERS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 8. QUEUE MANAGEMENT & DUPLICATE PREVENTION
 
-⚠️  NEVER share config.py with anyone
-⚠️  NEVER share credentials.json or yt_token.pkl
-⚠️  NEVER paste your tokens in any chat or email
-⚠️  If a token is accidentally shared → REVOKE IT IMMEDIATELY
-    (Meta Developer → App → Revoke token)
+All repurposing jobs are recorded in SQLite (`noorpost.db`):
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-May Allah SWT accept this effort. آمين
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- **Job States**: `SOURCE_QUEUED`, `SOURCE_PROCESSING`, `CLIPS_SELECTED`, `CLIPS_RENDERING`, `READY_FOR_DROPBOX`, `DROPBOX_UPLOADING`, `DROPBOX_READY`, `HANDED_OFF_TO_MAKE`, `PUBLISHED`, `FAILED`, `SKIPPED`.
+- **Duplicate Prevention**: Slices are tracked by source ID and start/end timestamps. The exact same timestamp range will never be re-rendered or re-uploaded.
+- **Auditing Jobs**:
+  ```powershell
+  python main.py --list-jobs
+  ```
+- **Retrying Failed Uploads**:
+  ```powershell
+  python main.py --retry-failed
+  ```
+
+---
+
+## 9. 13 CANONICAL CONTENT CATEGORIES
+
+| Category ID | Name | Arabic Badge | Default Theme |
+|---|---|---|---|
+| `daily_duas` | Daily Duas | DAILY DUA | `midnight-gold` |
+| `morning_adhkar` | Morning Adhkar | MORNING ADHKAR | `peaceful-nature` |
+| `evening_adhkar` | Evening Adhkar | EVENING ADHKAR | `reflective-night` |
+| `gratitude_patience` | Gratitude & Patience | SABR & SHUKR | `emerald-serenity` |
+| `forgiveness_repentance` | Repentance & Forgiveness | SEEKING FORGIVENESS | `midnight-gold` |
+| `remembrance_dhikr` | Remembrance of Allah | DHIKR & REMEMBRANCE | `midnight-gold` |
+| `quranic_verses` | Quranic Verses | THE NOBLE QUR'AN | `masjid-elegance` |
+| `prophetic_hadith` | Prophetic Hadith | PROPHETIC TEACHING | `emerald-serenity` |
+| `short_reminders` | Short Reminders | FAITH REMINDER | `minimal-white` |
+| `ramadan` | Ramadan Content | RAMADAN REMINDER | `ramadan-eid` |
+| `friday_reminders` | Friday Reminders | JUMU'AH REMINDER | `masjid-elegance` |
+| `eid_content` | Eid Content | EID MUBARAK | `ramadan-eid` |
+| `general_education` | General Education | ISLAMIC WISDOM | `minimal-white` |
+
+---
+
+## 10. VISUAL THEMES & PRESETS
+
+### Visual Themes:
+- `midnight-gold` — Obsidian black background, royal gold accents & 8-point geometric stars.
+- `emerald-serenity` — Forest emerald gradients with traditional Islamic arches.
+- `minimal-white` — Clean ivory parchment with deep onyx typography.
+- `peaceful-nature` — Earthy dawn gradients with mountain silhouettes.
+- `reflective-night` — Indigo night sky with celestial crescent & stars.
+- `masjid-elegance` — Twilight blue with mosque dome silhouettes.
+- `ramadan-eid` — Festive violet/sapphire with traditional fanous lanterns.
+
+### Render Presets:
+- `fast`: Ultrafast encoding, 15 fps (great for quick drafts & testing).
+- `balanced`: Fast encoding, 24 fps (standard production balance).
+- `high_quality`: Slow encoding, 30 fps, high bitrate (pristine archival quality).
+
+---
+
+## 11. COMMAND-LINE REFERENCE (CLI)
+
+```powershell
+# --- Video Repurposing ---
+# Repurpose authorized YouTube lecture
+python main.py --repurpose-url "https://youtube.com/watch?v=..." --confirm-rights
+
+# Repurpose with custom settings (4 clips, 50s each, center crop, fast preset)
+python main.py --repurpose-url "https://youtube.com/watch?v=..." --confirm-rights --num-clips 4 --clip-duration 50 --reframing center_crop --preset fast
+
+# Repurpose local lecture file
+python main.py --repurpose-file "D:\lectures\khutbah.mp4" --clip-duration 40
+
+# Preview candidate clips without rendering
+python main.py --repurpose-file "D:\lectures\khutbah.mp4" --preview-clips
+
+# Manual timestamp cuts
+python main.py --repurpose-file "D:\lectures\khutbah.mp4" --timestamps "01:15-02:00, 05:30-06:15"
+
+# List repurposing jobs & statuses
+python main.py --list-jobs
+
+# Retry failed uploads
+python main.py --retry-failed
+
+# --- Original Content Engine ---
+# Render video preview for a category
+python main.py --preview --category friday_reminders --preset fast --duration 5
+
+# List 13 canonical categories
+python main.py --list-categories
+
+# View review audit status
+python main.py --review-status
+
+# Approve/Reject items
+python main.py --approve 12
+python main.py --reject 15
+
+# Run one full automated cycle
+python main.py --now
+
+# Start automated background daily scheduler
+python main.py
+```
+
+---
+
+## 12. NOORPOST AUTOPILOT (AUTOMATED BATCH & RECURRING PROCESSING)
+
+NoorPost Autopilot operates as an autonomous worker that continuously monitors a queue of long-form Islamic lectures, khutbahs, and educational videos, generates professional vertical Reels (1080x1920) with subtitles, thumbnails, and captions, and deposits them into Dropbox for your Make.com Instagram scenario.
+
+### Queue File (`source_queue.txt`)
+The queue file is located at `D:\noorpost\source_queue.txt`. Add one source per line (blank lines and lines starting with `#` are ignored):
+
+```text
+# Local lectures and recitations:
+D:\lectures\friday_khutbah_2026.mp4
+D:\recitations\surah_rahman.mp4
+
+# Authorized YouTube URLs (requires --confirm-rights):
+https://www.youtube.com/watch?v=example123
+```
+
+### Autopilot CLI Commands:
+
+```powershell
+# Check current autopilot queue status & statistics
+python main.py --autopilot-status
+
+# Process all queued sources once and exit (local files only)
+python main.py --autopilot-once
+
+# Process all queued sources once including authorized YouTube URLs
+python main.py --autopilot-once --confirm-rights
+
+# Start continuous background autopilot loop (polls every 60 minutes)
+python main.py --autopilot-loop
+
+# Start loop with custom polling interval (e.g., every 30 minutes) and YouTube rights confirmed
+python main.py --autopilot-loop --interval 30 --confirm-rights
+
+# Retry failed queue jobs (up to max attempts)
+python main.py --autopilot-retry
+```
+
+### Key Autopilot Safeguards:
+- **Duplicate Prevention:** Every source URL and file path is normalized and hashed in SQLite (`autopilot_jobs`). The exact same source is never processed twice.
+- **Crash Recovery:** If the system is interrupted or restarted, any job left in `PROCESSING` status is safely resumed on the next cycle.
+- **Rights Enforcement:** YouTube sources strictly require the `--confirm-rights` flag. If omitted, the job is marked `FAILED` with an audit note to protect against unauthorized repurposing.
+- **Retry Backoff:** Transient pipeline errors are caught and tracked up to `AUTOPILOT_MAX_RETRY_ATTEMPTS` before permanently failing.
+
+---
+
+## 13. AUTOMATED TESTING & VERIFICATION
+
+Run the entire 68-test unit and integration test suite:
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Run only Autopilot tests:
+```powershell
+python -m unittest tests/test_autopilot.py -v
+```
+
+Run only Repurposing tests:
+```powershell
+python -m unittest tests/test_repurposing.py -v
+```
+
+Run original Content Engine tests:
+```powershell
+python -m unittest tests/test_content_engine.py -v
+```
+
+*All external services (Dropbox, YouTube downloaders, AI endpoints) are mocked in tests to guarantee test runs never upload to real accounts.*
