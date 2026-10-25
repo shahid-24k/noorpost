@@ -86,10 +86,15 @@ class StateSyncManager:
         return state_data
 
     # ── State Push (Run at end of workflow) ──────────────────────────────────────
-    def push_state(self) -> bool:
+    def push_state(self, is_dry_run: bool = False) -> bool:
         """
         Export publication records from SQLite and upload the persistent state to Dropbox.
+        If is_dry_run or config.PREVIEW_ONLY is True, remote push is strictly skipped to protect production state.
         """
+        if is_dry_run or getattr(config, "PREVIEW_ONLY", False):
+            log("ℹ️  Dry-run / preview mode active. Skipping persistent state push to Dropbox to protect production state.", level="INFO")
+            return True
+
         init_db()
         state_data = self._build_state_from_sqlite()
 

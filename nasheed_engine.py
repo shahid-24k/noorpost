@@ -118,16 +118,10 @@ class NasheedEngine:
             return None
 
         local_path = track.get("local_path")
-        audio_file = None
-        if local_path and Path(local_path).exists() and Path(local_path).stat().st_size > 1000:
-            audio_file = local_path
-        else:
-            # Check existing assets/audio directory for fallback
-            from audio_manager import get_audio_file
-            audio_file = get_audio_file(duration=int(target_duration))
-
-        if not audio_file or not Path(audio_file).exists():
+        if not local_path or not Path(local_path).exists() or Path(local_path).stat().st_size < 1000:
+            log(f"ℹ️ Audio file for '{track.get('title')}' is not present locally ({local_path}). Defaulting to silent audio.", level="INFO")
             return None
+        audio_file = local_path
 
         start_sec, end_sec, label = self.get_highlight_timing(track, target_duration)
 

@@ -256,7 +256,7 @@ def main(argv=None):
 
     if args.sync_state_up:
         from state_sync import state_manager
-        state_manager.push_state()
+        state_manager.push_state(is_dry_run=args.preview)
         return
 
     if args.list_themes:

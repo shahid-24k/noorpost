@@ -45,10 +45,11 @@ class TestGitHubActionsWorkflow(unittest.TestCase):
         self.assertIn("repurpose_url:", content)
         self.assertIn("confirm_rights:", content)
 
-    def test_workflow_executes_one_shot_commands(self):
-        """Verify workflow runs one-shot commands (python main.py ...) without blocking loops."""
+    def test_workflow_executes_safe_runner_without_eval(self):
+        """Verify workflow runs scripts/run_workflow.py and completely excludes dangerous eval."""
         content = self.workflow_file.read_text(encoding="utf-8")
-        self.assertIn("python main.py", content)
+        self.assertIn("python scripts/run_workflow.py", content)
+        self.assertNotIn("eval", content)
         self.assertNotIn("--autopilot-loop", content)
 
     def test_workflow_state_sync_steps(self):
@@ -56,6 +57,11 @@ class TestGitHubActionsWorkflow(unittest.TestCase):
         content = self.workflow_file.read_text(encoding="utf-8")
         self.assertIn("python main.py --sync-state-down", content)
         self.assertIn("python main.py --sync-state-up", content)
+
+    def test_workflow_skips_state_push_on_dry_run(self):
+        """Verify the state push step is skipped during dry runs to prevent production corruption."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("github.event.inputs.dry_run != 'true'", content)
 
 
 class TestPersistentStateSync(unittest.TestCase):
@@ -116,6 +122,18 @@ class TestPersistentStateSync(unittest.TestCase):
         self.assertIsNotNone(pulled)
         pushed = manager.push_state()
         self.assertFalse(pushed)  # Returns False safely without raising
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_push_state_skipped_on_dry_run(self, mock_get_client):
+        """Verify push_state skips Dropbox upload completely when dry_run is True."""
+        mock_dbx = MagicMock()
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        success = manager.push_state(is_dry_run=True)
+
+        self.assertTrue(success)
+        mock_dbx.files_upload.assert_not_called()
 
 
 if __name__ == "__main__":

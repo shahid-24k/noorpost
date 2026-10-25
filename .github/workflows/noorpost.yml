@@ -119,63 +119,19 @@ jobs:
           python main.py --sync-state-down
 
       - name: Execute Content Generation & Publishing
+        env:
+          INPUT_CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          INPUT_THEME: ${{ github.event.inputs.theme }}
+          INPUT_PRESET: ${{ github.event.inputs.preset }}
+          INPUT_DURATION: ${{ github.event.inputs.duration }}
+          INPUT_ENABLE_NASHEED: ${{ github.event.inputs.enable_nasheed }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_REPURPOSE_URL: ${{ github.event.inputs.repurpose_url }}
+          INPUT_CONFIRM_RIGHTS: ${{ github.event.inputs.confirm_rights }}
         run: |
-          # Build one-shot execution command
-          CMD="python main.py"
-
-          # Determine Run Mode
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            CMD="$CMD --preview"
-          else
-            CMD="$CMD --now"
-          fi
-
-          # Content Type routing
-          CONTENT_TYPE="${{ github.event.inputs.content_type }}"
-          if [ "$CONTENT_TYPE" = "hadith_sahih" ]; then
-            CMD="$CMD --hadith-sahih"
-          elif [ "$CONTENT_TYPE" = "repurpose" ]; then
-            REPURPOSE_URL="${{ github.event.inputs.repurpose_url }}"
-            if [ -n "$REPURPOSE_URL" ]; then
-              CMD="python main.py --repurpose-url '$REPURPOSE_URL'"
-              if [ "${{ github.event.inputs.confirm_rights }}" = "true" ]; then
-                CMD="$CMD --confirm-rights"
-              fi
-            else
-              echo "::error::repurpose_url must be provided when content_type is repurpose"
-              exit 1
-            fi
-          elif [ "$CONTENT_TYPE" != "auto" ] && [ -n "$CONTENT_TYPE" ]; then
-            CMD="$CMD --category $CONTENT_TYPE"
-          fi
-
-          # Visual Theme routing
-          THEME="${{ github.event.inputs.theme }}"
-          if [ "$THEME" != "auto" ] && [ -n "$THEME" ]; then
-            CMD="$CMD --theme $THEME"
-          fi
-
-          # Preset routing
-          PRESET="${{ github.event.inputs.preset }}"
-          if [ -n "$PRESET" ]; then
-            CMD="$CMD --preset $PRESET"
-          fi
-
-          # Duration routing
-          DURATION="${{ github.event.inputs.duration }}"
-          if [ -n "$DURATION" ]; then
-            CMD="$CMD --duration $DURATION"
-          fi
-
-          # Nasheed audio flag
-          if [ "${{ github.event.inputs.enable_nasheed }}" = "false" ]; then
-            CMD="$CMD --no-nasheed"
-          fi
-
-          echo "Executing: $CMD"
-          eval $CMD
+          python scripts/run_workflow.py
 
       - name: Push Persistent State to Dropbox
-        if: always()
+        if: always() && github.event.inputs.dry_run != 'true'
         run: |
           python main.py --sync-state-up

@@ -1,19 +1,19 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "catalog_name": "Halal Tunes Curated Nasheed Catalog",
   "source_channel": "Halal Tunes (@HalalTunesYT)",
-  "licence_policy": "Vocals Only / Instrument-Free. Content creators permitted to use audio in YouTube Shorts and Instagram Reels with attribution.",
+  "licence_policy": "Strict Religious & Copyright Safety: Only tracks with verifiable track-specific creator permissions, valid source links, and verified locally hosted audio may be APPROVED for automatic publishing.",
   "tracks": [
     {
       "id": "halaltunes_noor_01",
       "title": "Noor (Divine Light) — Vocals Only",
       "creator": "Halal Tunes",
       "channel": "@HalalTunesYT",
-      "youtube_url": "https://www.youtube.com/watch?v=HT_NOOR_01",
+      "youtube_url": null,
       "download_url": null,
       "local_path": "assets/audio/nasheeds/halaltunes_noor_01.mp3",
-      "permission_evidence": "Creator description: '100% Instruments Free. Vocals Only Nasheed. Free for content creators to use in their Islamic reminders, reels, and shorts with credits.'",
-      "external_use_permission": "PERMITTED_WITH_ATTRIBUTION",
+      "permission_evidence": "Pending verification: Requires valid track-specific source URL, verified creator permission statement, and locally provisioned audio file.",
+      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
       "required_attribution": "Background Nasheed: 'Noor' by Halal Tunes (YouTube: @HalalTunesYT)",
       "language": "Arabic / Vocal Harmonies",
       "topic_tags": [
@@ -31,26 +31,20 @@
           "end": 45.0,
           "label": "Main Refrain",
           "description": "Lyrical melodic acapella refrain suitable for 15-30s Reels."
-        },
-        {
-          "start": 60.0,
-          "end": 105.0,
-          "label": "Climactic Harmony",
-          "description": "Gentle uplifting vocal chorus for 45s Reels."
         }
       ],
-      "approval_status": "APPROVED"
+      "approval_status": "NEEDS_LICENSE_REVIEW"
     },
     {
       "id": "halaltunes_sabr_02",
       "title": "Patience & Reflection (Sabr) — Vocals Only",
       "creator": "Halal Tunes",
       "channel": "@HalalTunesYT",
-      "youtube_url": "https://www.youtube.com/watch?v=HT_SABR_02",
+      "youtube_url": null,
       "download_url": null,
       "local_path": "assets/audio/nasheeds/halaltunes_sabr_02.mp3",
-      "permission_evidence": "Creator description: 'Halal background vocal bed with no instruments. Free to use with attribution in video descriptions.'",
-      "external_use_permission": "PERMITTED_WITH_ATTRIBUTION",
+      "permission_evidence": "Pending verification: Requires valid track-specific source URL, verified creator permission statement, and locally provisioned audio file.",
+      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
       "required_attribution": "Background Nasheed: 'Sabr' by Halal Tunes (YouTube: @HalalTunesYT)",
       "language": "Vocals Only / Bed",
       "topic_tags": [
@@ -68,18 +62,18 @@
           "description": "Contemplative hum and vocal resonance for introspective topics."
         }
       ],
-      "approval_status": "APPROVED"
+      "approval_status": "NEEDS_LICENSE_REVIEW"
     },
     {
       "id": "halaltunes_shukr_03",
       "title": "Heartfelt Gratitude (Shukr) — Vocals Only",
       "creator": "Halal Tunes",
       "channel": "@HalalTunesYT",
-      "youtube_url": "https://www.youtube.com/watch?v=HT_SHUKR_03",
+      "youtube_url": null,
       "download_url": null,
       "local_path": "assets/audio/nasheeds/halaltunes_shukr_03.mp3",
-      "permission_evidence": "Creator description: 'Vocals only background track. Free use for non-commercial and educational social videos with credit.'",
-      "external_use_permission": "PERMITTED_WITH_ATTRIBUTION",
+      "permission_evidence": "Pending verification: Requires valid track-specific source URL, verified creator permission statement, and locally provisioned audio file.",
+      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
       "required_attribution": "Background Nasheed: 'Shukr' by Halal Tunes (YouTube: @HalalTunesYT)",
       "language": "Vocals Only",
       "topic_tags": [
@@ -97,18 +91,18 @@
           "description": "Joyful, serene vocal theme suitable for morning and gratitude reminders."
         }
       ],
-      "approval_status": "APPROVED"
+      "approval_status": "NEEDS_LICENSE_REVIEW"
     },
     {
       "id": "halaltunes_fajr_04",
       "title": "Dawn Serenity (Fajr) — Vocals Only",
       "creator": "Halal Tunes",
       "channel": "@HalalTunesYT",
-      "youtube_url": "https://www.youtube.com/watch?v=HT_FAJR_04",
+      "youtube_url": null,
       "download_url": null,
       "local_path": "assets/audio/nasheeds/halaltunes_fajr_04.mp3",
-      "permission_evidence": "Creator description: 'No music / No instruments. Permitted for social media creation with backlink.'",
-      "external_use_permission": "PERMITTED_WITH_ATTRIBUTION",
+      "permission_evidence": "Pending verification: Requires valid track-specific source URL, verified creator permission statement, and locally provisioned audio file.",
+      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
       "required_attribution": "Background Nasheed: 'Dawn Serenity' by Halal Tunes (YouTube: @HalalTunesYT)",
       "language": "Vocals Only",
       "topic_tags": [
@@ -126,14 +120,14 @@
           "description": "Quiet vocal hum ideal for early morning adhkar."
         }
       ],
-      "approval_status": "APPROVED"
+      "approval_status": "NEEDS_LICENSE_REVIEW"
     },
     {
       "id": "halaltunes_review_sample",
       "title": "Unverified Community Vocal Track",
       "creator": "Unknown Third Party",
       "channel": "@Unknown",
-      "youtube_url": "https://www.youtube.com/watch?v=HT_UNKNOWN",
+      "youtube_url": null,
       "download_url": null,
       "local_path": null,
       "permission_evidence": "Commercial reuse permission unclear; external distribution terms not specified in description.",
