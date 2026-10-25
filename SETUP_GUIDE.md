@@ -20,7 +20,14 @@ It generates high-definition 1080x1920 vertical videos (9:16) for Instagram Reel
 9. [13 Canonical Content Categories](#9-13-canonical-content-categories)
 10. [Visual Themes & Presets](#10-visual-themes--presets)
 11. [Command-Line Reference (CLI)](#11-command-line-reference-cli)
-12. [Automated Testing & Verification](#12-automated-testing--verification)
+12. [NoorPost Autopilot (Automated Batch & Recurring Processing)](#12-noorpost-autopilot-automated-batch--recurring-processing)
+13. [Automatic Approved-Channel Discovery](#13-automatic-approved-channel-discovery)
+14. [GitHub Actions Production Automation](#14-github-actions-production-automation)
+15. [State Synchronization & Deduplication (Schema 2.0)](#15-state-synchronization--deduplication-schema-20)
+16. [Content Rotation & Religious Accuracy](#16-content-rotation--religious-accuracy)
+17. [Nasheed & Audio Asset Integration](#17-nasheed--audio-asset-integration)
+18. [GitHub Secrets Configuration](#18-github-secrets-configuration)
+19. [Automated Testing & Verification](#19-automated-testing--verification)
 
 ---
 
@@ -300,15 +307,23 @@ python main.py
 NoorPost Autopilot operates as an autonomous worker that continuously monitors a queue of long-form Islamic lectures, khutbahs, and educational videos, generates professional vertical Reels (1080x1920) with subtitles, thumbnails, and captions, and deposits them into Dropbox for your Make.com Instagram scenario.
 
 ### Queue File (`source_queue.txt`)
-The queue file is located at `D:\noorpost\source_queue.txt`. Add one source per line (blank lines and lines starting with `#` are ignored):
+The queue file is located at `D:\noorpost\source_queue.txt`. It supports both plain paths/URLs and pipe-delimited structured entries:
 
+#### Structured Queue Format:
 ```text
-# Local lectures and recitations:
-D:\lectures\friday_khutbah_2026.mp4
-D:\recitations\surah_rahman.mp4
+URL_OR_PATH | CHANNEL_OR_CREATOR | RIGHTS_CONFIRMED (YES/NO) | PREFERRED_TIMESTAMPS (OPTIONAL)
+```
 
-# Authorized YouTube URLs (requires --confirm-rights):
-https://www.youtube.com/watch?v=example123
+Example entries:
+```text
+# Authorized YouTube lecture with confirmed rights and specific timestamps:
+https://www.youtube.com/watch?v=example123 | Bayyinah Institute | YES | 01:15-02:00, 05:30-06:15
+
+# Local lecture file with confirmed ownership:
+D:\lectures\friday_khutbah_2026.mp4 | Sheikh Omar Suleiman | YES |
+
+# Queue item pending license confirmation (will be safely skipped until YES):
+https://www.youtube.com/watch?v=unconfirmed456 | Guest Speaker | NO |
 ```
 
 ### Autopilot CLI Commands:
@@ -329,6 +344,9 @@ python main.py --autopilot-loop
 # Start loop with custom polling interval (e.g., every 30 minutes) and YouTube rights confirmed
 python main.py --autopilot-loop --interval 30 --confirm-rights
 
+# Discover recent uploads from approved channels into queue
+python main.py --discover-channels
+
 # Retry failed queue jobs (up to max attempts)
 python main.py --autopilot-retry
 ```
@@ -336,31 +354,133 @@ python main.py --autopilot-retry
 ### Key Autopilot Safeguards:
 - **Duplicate Prevention:** Every source URL and file path is normalized and hashed in SQLite (`autopilot_jobs`). The exact same source is never processed twice.
 - **Crash Recovery:** If the system is interrupted or restarted, any job left in `PROCESSING` status is safely resumed on the next cycle.
-- **Rights Enforcement:** YouTube sources strictly require the `--confirm-rights` flag. If omitted, the job is marked `FAILED` with an audit note to protect against unauthorized repurposing.
+- **Rights Enforcement:** YouTube sources strictly require rights confirmation (`YES` in structured queue or `--confirm-rights` CLI flag). Unconfirmed sources are safely skipped.
 - **Retry Backoff:** Transient pipeline errors are caught and tracked up to `AUTOPILOT_MAX_RETRY_ATTEMPTS` before permanently failing.
 
 ---
 
-## 13. AUTOMATED TESTING & VERIFICATION
+## 13. AUTOMATIC APPROVED-CHANNEL DISCOVERY
 
-Run the entire 68-test unit and integration test suite:
+To discover authorized long-form lectures automatically, configure `approved_channels.txt`:
+
+### Configuration Format (`approved_channels.txt`):
+```text
+CHANNEL_ID | CHANNEL_NAME | RIGHTS_CONFIRMED (YES/NO) | NOTES
+```
+
+Example:
+```text
+UC_x5XG1OV2P6uZZ5FSM9Ttw | Example Islamic Foundation | YES | Authorized syndication partner
+```
+
+### Discovery Mechanics:
+1. Discovery uses YouTube's official public Atom RSS feed (`https://www.youtube.com/feeds/videos.xml?channel_id=...`). It never scrapes, downloads without authorization, or circumvents platform rules.
+2. Only channels with `RIGHTS_CONFIRMED=YES` are queried. If no approved channels are configured, discovery remains inactive without generating false errors.
+3. Discovered video IDs are checked against existing `autopilot_queue` and `repurpose_sources` records to prevent duplicate queueing.
+4. Run discovery via:
+   ```powershell
+   python main.py --discover-channels
+   ```
+
+---
+
+## 14. GITHUB ACTIONS PRODUCTION AUTOMATION
+
+Production automation runs via `.github/workflows/noorpost.yml` on GitHub Actions:
+
+### Daily Schedule (India Standard Time - IST):
+- **Morning Slot:** 08:00 AM IST (`30 2 * * *` UTC)
+- **Evening Slot:** 09:00 PM IST (`30 15 * * *` UTC)
+
+### Extra Lecture Reels Limit:
+In addition to the scheduled authentic reminder/dua/Hadith, the workflow can process up to `MAX_LECTURE_REELS_PER_RUN` (default: `1`) eligible lecture Reel per execution. This prevents runaway processing and API rate limit exhaustion.
+
+### Safe Dry-Run Workflow Dispatch:
+You can trigger the workflow manually from the GitHub Actions UI:
+1. Navigate to **Actions** -> **NoorPost Daily Production Pipeline**.
+2. Click **Run workflow**.
+3. Choose branch (e.g., `main` or `noorpost/automation-release`).
+4. Set `dry_run` to `true` (renders video and preview artifacts without uploading to Dropbox or modifying remote state).
+5. Review the generated video artifact in GitHub Actions summary.
+
+---
+
+## 15. STATE SYNCHRONIZATION & DEDUPLICATION (SCHEMA 2.0)
+
+Ephemeral GitHub-hosted runners do not persist local disk state between runs. NoorPost solves this through secure, cloud-synchronized state via Dropbox (`/NoorPost_State/noorpost_state.json`):
+
+### Idempotent State Merging:
+- **Usage Counters:** Instead of blind incrementation (`times_used + 1`), `state_sync.py` merges `duas_meta.times_used` using `MAX(local, remote)`. Repeating state pulls or rerunning workflows will never artificially inflate usage counters.
+- **Multi-Table Reconciliation:** `state_sync.py` reconciles `publication_history`, `video_records`, `autopilot_queue`, and `repurpose_clips`. Completed jobs and deduplication history survive runner restarts.
+- **Identifier Decoupling:** Content items are tracked by stable source-qualified identifiers (`content_uid`) and SHA-256 hashes (`content_hash`), decoupled from ephemeral SQLite autoincrement integer row IDs.
+- **Fail-Closed Safety:** If Dropbox authentication fails or the network times out during production execution, state synchronization fails closed (`RuntimeError`) rather than assuming an empty state, preventing accidental duplicates.
+- **Dry-Run Isolation:** State upload is strictly guarded with `if: success() && github.event.inputs.dry_run != 'true'`. Dry runs and failed workflows never overwrite production state.
+
+---
+
+## 16. CONTENT ROTATION & RELIGIOUS ACCURACY
+
+NoorPost prioritizes strict religious authenticity over filler content. Content is selected in order of preference:
+1. **Eligible Lecture Highlights** (when authorized and queued).
+2. **Verified Duas** (with authenticated book and chapter references).
+3. **Authenticated Sahih Hadiths** (from official Sunnah.com API or curated local Sahih collection).
+4. **Accurate Quranic Reminders** (with verified Surah/Ayah numbers and reliable translations).
+
+### Hadith Pipeline:
+- **Official Sunnah.com API:** Used when `SUNNAH_API_KEY` is configured. Fetches Bukhari, Muslim, and other canonical collections, grading authenticity strictly.
+- **Curated Local Fallback:** When API access is unavailable or offline, the system falls back to verified Sahih Hadiths from `content_db.py`.
+- **Deduplication:** Uses both internal database IDs and source-qualified external keys (e.g., `sunnah_bukhari_1`) plus SHA-256 content hashes to prevent repeating Hadiths across 24-hour windows.
+
+---
+
+## 17. NASHEED & AUDIO ASSET INTEGRATION
+
+### Halal Tunes & Personal Audio:
+- **Catalog Management:** `assets/nasheeds/catalog.json` tracks all candidate audio tracks.
+- **License Status:** Only tracks marked `"status": "APPROVED"` with documented creator permission are selected for production video mixing.
+- **Adding Your Audio Files:** Place your authorized `.mp3` or `.wav` files into `assets/audio/custom/` or `assets/audio/nasheeds/` and register them in `catalog.json` with proof of rights.
+- **Safe Silent Fallback:** If no approved audio tracks exist or local audio files are missing, the pipeline renders clean video with silent audio fallback. It **never** manufactures fake audio attributions in captions.
+
+---
+
+## 18. GITHUB SECRETS CONFIGURATION
+
+To enable automated production runs in GitHub Actions, configure the following secrets in your GitHub repository (**Settings** -> **Secrets and variables** -> **Actions**):
+
+| Secret Name | Required? | Purpose |
+|---|---|---|
+| `DROPBOX_APP_KEY` | Yes | Dropbox OAuth App Key |
+| `DROPBOX_APP_SECRET` | Yes | Dropbox OAuth App Secret |
+| `DROPBOX_REFRESH_TOKEN` | Yes | Long-lived Dropbox OAuth Refresh Token |
+| `DROPBOX_ACCESS_TOKEN` | Optional | Initial short-lived access token |
+| `SUNNAH_API_KEY` | Optional | Official Sunnah.com Hadith API access key |
+
+---
+
+## 19. AUTOMATED TESTING & VERIFICATION
+
+Run the entire test suite (121+ tests):
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Run only Autopilot tests:
+Run specific test modules:
 ```powershell
+# Autopilot & structured queue tests:
 python -m unittest tests/test_autopilot.py -v
-```
 
-Run only Repurposing tests:
-```powershell
-python -m unittest tests/test_repurposing.py -v
-```
+# Approved channel discovery tests:
+python -m unittest tests/test_channel_discovery.py -v
 
-Run original Content Engine tests:
-```powershell
-python -m unittest tests/test_content_engine.py -v
+# State synchronization & idempotency tests:
+python -m unittest tests/test_github_actions_and_state.py -v
+
+# Database migrations & Hadith deduplication:
+python -m unittest tests/test_database.py -v
+
+# Nasheed engine & licensing tests:
+python -m unittest tests/test_nasheed_engine.py -v
 ```
 
 *All external services (Dropbox, YouTube downloaders, AI endpoints) are mocked in tests to guarantee test runs never upload to real accounts.*
+

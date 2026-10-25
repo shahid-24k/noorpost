@@ -1,0 +1,8 @@
+# NoorPost Approved Channels Configuration
+# Only videos from channels explicitly listed here with RIGHTS_CONFIRMED=YES will be discovered.
+#
+# Format:
+# CHANNEL_ID | CHANNEL_NAME | RIGHTS_CONFIRMED (YES/NO) | NOTES
+#
+# Examples:
+# UC_x5XG1OV2P6uZZ5FSM9Ttw | Example Channel | NO | Demo entry pending creator agreement

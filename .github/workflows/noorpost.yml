@@ -132,6 +132,6 @@ jobs:
           python scripts/run_workflow.py
 
       - name: Push Persistent State to Dropbox
-        if: always() && github.event.inputs.dry_run != 'true'
+        if: success() && github.event.inputs.dry_run != 'true'
         run: |
           python main.py --sync-state-up

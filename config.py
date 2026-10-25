@@ -72,6 +72,7 @@ REQUIRE_APPROVAL = os.getenv("REQUIRE_APPROVAL", "False").strip().lower() in ("t
 PREVIEW_ONLY = os.getenv("PREVIEW_ONLY", "False").strip().lower() in ("true", "1", "yes")
 AUTOPILOT_INTERVAL_MINUTES = int(os.getenv("AUTOPILOT_INTERVAL_MINUTES", "30"))
 AUTOPILOT_ENABLED = os.getenv("AUTOPILOT_ENABLED", "False").strip().lower() in ("true", "1", "yes")
+MAX_LECTURE_REELS_PER_RUN = int(os.getenv("MAX_LECTURE_REELS_PER_RUN", "1"))
 
 
 # =============================================================================

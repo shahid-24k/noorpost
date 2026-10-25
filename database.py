@@ -120,7 +120,8 @@ def init_db():
             ("grading", "TEXT DEFAULT 'Sahih'"),
             ("review_status", "TEXT DEFAULT 'approved'"),
             ("commentary", "TEXT"),
-            ("tags", "TEXT")
+            ("tags", "TEXT"),
+            ("content_uid", "TEXT")
         ]
 
         for col_name, col_def in new_columns:
@@ -132,6 +133,21 @@ def init_db():
         video_cols = {col["name"] for col in cursor.fetchall()}
         if "category" not in video_cols:
             cursor.execute("ALTER TABLE video_records ADD COLUMN category TEXT DEFAULT 'daily_duas'")
+
+        # Non-destructive migrations for autopilot_queue:
+        cursor.execute("PRAGMA table_info(autopilot_queue)")
+        ap_cols = {col["name"] for col in cursor.fetchall()}
+        if ap_cols:
+            ap_new_cols = [
+                ("channel", "TEXT"),
+                ("rights_confirmed", "INTEGER DEFAULT 0"),
+                ("preferred_start", "REAL"),
+                ("preferred_end", "REAL"),
+                ("clip_ids", "TEXT")
+            ]
+            for ap_col_name, ap_col_def in ap_new_cols:
+                if ap_col_name not in ap_cols:
+                    cursor.execute(f"ALTER TABLE autopilot_queue ADD COLUMN {ap_col_name} {ap_col_def}")
 
         
         # 6. Repurpose Sources Table
@@ -198,18 +214,20 @@ def sync_duas(duas_list: List[Dict[str, Any]]):
         cursor = conn.cursor()
         for idx, item in enumerate(duas_list):
             chash = compute_content_hash(item["arabic"], item["source"])
+            content_uid = str(item.get("id") or item.get("content_uid") or chash[:16])
             category = item.get("category", "daily_duas")
             review_status = item.get("review_status", "approved")
             is_verified = int(item.get("is_verified", 1))
 
             cursor.execute("""
                 INSERT INTO duas_meta (
-                    content_hash, dua_index, dua_type, arabic, transliteration,
+                    content_hash, content_uid, dua_index, dua_type, arabic, transliteration,
                     translation, source, times_used, is_verified, created_at,
                     category, surah_name, verse_number, hadith_collection,
                     hadith_number, narrator, grading, review_status, commentary, tags
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(content_hash) DO UPDATE SET
+                    content_uid = COALESCE(excluded.content_uid, duas_meta.content_uid),
                     dua_index = excluded.dua_index,
                     dua_type = excluded.dua_type,
                     transliteration = excluded.transliteration,
@@ -226,7 +244,7 @@ def sync_duas(duas_list: List[Dict[str, Any]]):
                     commentary = excluded.commentary,
                     tags = excluded.tags
             """, (
-                chash, idx, item.get("type", item.get("dua_type", "Authentic Content")),
+                chash, content_uid, idx, item.get("type", item.get("dua_type", "Authentic Content")),
                 item["arabic"], item.get("transliteration", ""), item["translation"],
                 item["source"], is_verified, now_iso, category,
                 item.get("surah_name"), item.get("verse_number"),
@@ -238,6 +256,59 @@ def sync_duas(duas_list: List[Dict[str, Any]]):
 
 # Alias for sync_duas
 sync_content = sync_duas
+
+def upsert_content_item(item: Dict[str, Any]) -> int:
+    """
+    Insert or update a verified Islamic content item into duas_meta.
+    Returns the integer primary key (id) of the item in SQLite.
+    Preserves existing times_used and last_used_at.
+    """
+    now_iso = datetime.now().isoformat()
+    chash = compute_content_hash(item["arabic"], item["source"])
+    content_uid = str(item.get("id") or item.get("content_uid") or chash[:16])
+    category = item.get("category", "daily_duas")
+    review_status = item.get("review_status", "approved")
+    is_verified = int(item.get("is_verified", 1))
+
+    with _get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO duas_meta (
+                content_hash, content_uid, dua_index, dua_type, arabic, transliteration,
+                translation, source, times_used, is_verified, created_at,
+                category, surah_name, verse_number, hadith_collection,
+                hadith_number, narrator, grading, review_status, commentary, tags
+            ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(content_hash) DO UPDATE SET
+                content_uid = COALESCE(excluded.content_uid, duas_meta.content_uid),
+                dua_type = excluded.dua_type,
+                transliteration = excluded.transliteration,
+                translation = excluded.translation,
+                source = excluded.source,
+                category = excluded.category,
+                surah_name = excluded.surah_name,
+                verse_number = excluded.verse_number,
+                hadith_collection = excluded.hadith_collection,
+                hadith_number = excluded.hadith_number,
+                narrator = excluded.narrator,
+                grading = excluded.grading,
+                review_status = excluded.review_status,
+                commentary = excluded.commentary,
+                tags = excluded.tags
+        """, (
+            chash, content_uid, item.get("type", item.get("dua_type", "Authentic Content")),
+            item["arabic"], item.get("transliteration", ""), item["translation"],
+            item["source"], is_verified, now_iso, category,
+            item.get("surah_name"), item.get("verse_number"),
+            item.get("hadith_collection"), item.get("hadith_number"),
+            item.get("narrator"), item.get("grading", "Sahih"),
+            review_status, item.get("commentary"), item.get("tags")
+        ))
+
+        cursor.execute("SELECT id FROM duas_meta WHERE content_hash = ?", (chash,))
+        row = cursor.fetchone()
+        conn.commit()
+        return row["id"]
 
 def update_content_review_status(content_id: int, new_status: str):
     """
@@ -380,17 +451,50 @@ def get_next_authentic_dua() -> Dict[str, Any]:
     """Backward compatibility wrapper for get_next_authentic_content."""
     return get_next_authentic_content()
 
-def is_recent_duplicate(dua_id: int, hours: int = 24) -> bool:
-    """Check if this specific content item has been successfully published in the past N hours."""
+def is_recent_duplicate(identifier: Any, hours: int = 24) -> bool:
+    """
+    Check if this specific content item has been successfully published in the past N hours.
+    Accepts:
+    - Internal integer database id (e.g. 42)
+    - Content hash string (SHA-256)
+    - External identifier or content_uid string (e.g. 'orig_dua_001', 'sunnah_bukhari_1')
+    """
+    if identifier is None:
+        return False
+
     threshold = (datetime.now() - timedelta(hours=hours)).isoformat()
     with _get_connection() as conn:
         cursor = conn.cursor()
+
+        is_num = False
+        num_id = None
+        if isinstance(identifier, int):
+            is_num = True
+            num_id = identifier
+        elif isinstance(identifier, str) and identifier.strip().isdigit():
+            is_num = True
+            num_id = int(identifier.strip())
+
+        if is_num:
+            cursor.execute("""
+                SELECT v.id FROM video_records v
+                JOIN publication_history p ON p.video_id = v.id
+                WHERE v.dua_id = ? AND p.status = 'success' AND p.attempted_at >= ?
+                LIMIT 1
+            """, (num_id, threshold))
+            if cursor.fetchone() is not None:
+                return True
+
+        # Check by content_hash or content_uid in duas_meta
+        ident_str = str(identifier).strip()
         cursor.execute("""
             SELECT v.id FROM video_records v
             JOIN publication_history p ON p.video_id = v.id
-            WHERE v.dua_id = ? AND p.status = 'success' AND p.attempted_at >= ?
+            JOIN duas_meta d ON d.id = v.dua_id
+            WHERE (d.content_hash = ? OR d.content_uid = ? OR v.dua_id = ?)
+              AND p.status = 'success' AND p.attempted_at >= ?
             LIMIT 1
-        """, (dua_id, threshold))
+        """, (ident_str, ident_str, ident_str, threshold))
         return cursor.fetchone() is not None
 
 def is_duplicate_caption(caption: str, lookback_days: int = 7) -> bool:

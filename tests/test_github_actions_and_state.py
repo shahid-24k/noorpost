@@ -135,6 +135,72 @@ class TestPersistentStateSync(unittest.TestCase):
         self.assertTrue(success)
         mock_dbx.files_upload.assert_not_called()
 
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_pull_state_idempotency_does_not_multiply_counts(self, mock_get_client):
+        """Verify calling pull_state repeatedly does NOT repeatedly increment times_used."""
+        from database import _get_connection, init_db
+        init_db()
+
+        # Seed a test item in duas_meta
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR IGNORE INTO duas_meta (
+                    content_hash, content_uid, dua_index, dua_type, arabic, transliteration,
+                    translation, source, times_used, is_verified, created_at
+                ) VALUES ('hash_idem_test', 'uid_idem_test', 0, 'Dua', 'test', 'test', 'test', 'source', 1, 1, '2026-10-25')
+            """)
+            conn.commit()
+
+        mock_dbx = MagicMock()
+        mock_resp = MagicMock()
+        state_payload = {
+            "version": "2.0",
+            "last_sync": "2026-10-25T10:00:00Z",
+            "published_content": [
+                {
+                    "content_hash": "hash_idem_test",
+                    "content_uid": "uid_idem_test",
+                    "times_used": 1,
+                    "last_used_at": "2026-10-25T10:00:00Z"
+                }
+            ],
+            "published_content_ids": ["uid_idem_test"],
+            "publications": []
+        }
+        mock_resp.content = json.dumps(state_payload).encode("utf-8")
+        mock_dbx.files_download.return_value = (None, mock_resp)
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        # Pull once
+        manager.pull_state()
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT times_used FROM duas_meta WHERE content_hash = 'hash_idem_test'")
+            count_after_first = cursor.fetchone()[0]
+
+        # Pull second time
+        manager.pull_state()
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT times_used FROM duas_meta WHERE content_hash = 'hash_idem_test'")
+            count_after_second = cursor.fetchone()[0]
+
+        self.assertEqual(count_after_first, count_after_second, "Repeated pull_state must be idempotent!")
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_pull_state_fails_closed_on_network_or_auth_error(self, mock_get_client):
+        """Verify pull_state fails closed (raises RuntimeError) when Dropbox fails with a non-404 error in production."""
+        mock_dbx = MagicMock()
+        mock_dbx.files_download.side_effect = ConnectionResetError("Connection reset by peer")
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        with self.assertRaises(RuntimeError) as ctx:
+            manager.pull_state(fail_closed=True)
+        self.assertIn("Failing closed", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

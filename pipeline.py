@@ -16,6 +16,7 @@ from categories import resolve_category
 from database import (
     init_db,
     sync_duas,
+    upsert_content_item,
     get_next_authentic_content,
     is_recent_duplicate,
     is_duplicate_caption,
@@ -63,7 +64,13 @@ def select_content(
                 if raw_hadith:
                     hadith_item = sunnah_client.format_hadith_record(raw_hadith)
                     if hadith_item:
-                        if not is_recent_duplicate(hadith_item["id"], hours=24):
+                        # Upsert into database to ensure local integer ID and content_hash exist
+                        row_id = upsert_content_item(hadith_item)
+                        external_id = hadith_item["id"]
+                        hadith_item["external_id"] = external_id
+                        hadith_item["id"] = row_id
+
+                        if not is_recent_duplicate(row_id, hours=24):
                             log(f"📖 Selected Verified Sahih Hadith (Sunnah.com): [{hadith_item['source']}]")
                             return hadith_item
                         else:

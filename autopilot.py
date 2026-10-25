@@ -75,9 +75,50 @@ def init_autopilot_db():
         conn.commit()
 
 
+def parse_queue_line(line: str) -> Dict[str, Any]:
+    """
+    Parse a queue line supporting both simple URLs and structured entries.
+    Supported format:
+      URL [ | CREATOR/CHANNEL | RIGHTS_CONFIRMED (YES/NO) | TIMESTAMPS (MM:SS-MM:SS) ]
+    Or JSON string.
+    """
+    stripped = line.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            import json
+            data = json.loads(stripped)
+            return {
+                "url": data.get("url", "").strip(),
+                "channel": data.get("channel", "").strip(),
+                "rights_confirmed": bool(data.get("rights_confirmed", False)),
+                "timestamps": data.get("timestamps", "").strip(),
+                "raw_entry": stripped
+            }
+        except Exception:
+            pass
+
+    parts = [p.strip() for p in stripped.split("|")]
+    url = parts[0]
+    channel = parts[1] if len(parts) > 1 else ""
+    rights_str = parts[2].lower() if len(parts) > 2 else ""
+    rights_confirmed = rights_str in ("yes", "true", "1", "confirmed")
+    timestamps = parts[3] if len(parts) > 3 else ""
+
+    return {
+        "url": url,
+        "channel": channel,
+        "rights_confirmed": rights_confirmed,
+        "timestamps": timestamps,
+        "raw_entry": stripped
+    }
+
+
 def _hash_entry(entry: str) -> str:
     """Deterministic hash for a queue entry to prevent duplicates."""
-    return hashlib.sha256(entry.strip().lower().encode("utf-8")).hexdigest()[:20]
+    clean = entry.strip().lower()
+    if "|" in clean:
+        clean = clean.split("|")[0].strip()
+    return hashlib.sha256(clean.encode("utf-8")).hexdigest()[:20]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -92,10 +133,10 @@ def parse_queue_file(queue_path: Optional[Path] = None) -> List[str]:
     if not path.exists():
         path.write_text(
             "# NoorPost Autopilot Source Queue\n"
-            "# Add one authorized YouTube URL or local video path per line.\n"
+            "# Supported format: URL [ | CREATOR | RIGHTS_CONFIRMED (YES/NO) | TIMESTAMPS ]\n"
             "# Lines starting with # are ignored.\n"
-            "# Example:\n"
-            "# https://www.youtube.com/watch?v=AUTHORIZED_VIDEO_ID\n"
+            "# Examples:\n"
+            "# https://www.youtube.com/watch?v=AUTHORIZED_VIDEO_ID | Islamic Reminder Channel | YES | 01:15-02:00\n"
             "# D:\\lectures\\my_khutbah.mp4\n",
             encoding="utf-8"
         )
@@ -114,15 +155,22 @@ def parse_queue_file(queue_path: Optional[Path] = None) -> List[str]:
 def sync_queue_to_db(entries: List[str]) -> int:
     """
     Insert new queue entries into the database. Skip already-known entries.
+    Supports structured entries with creator, rights confirmation, and timestamps.
     Returns the number of newly queued entries.
     """
+    init_autopilot_db()
     now_iso = datetime.now().isoformat()
     new_count = 0
 
     with _get_connection() as conn:
         cursor = conn.cursor()
         for entry in entries:
-            entry_hash = _hash_entry(entry)
+            parsed = parse_queue_line(entry)
+            core_url = parsed["url"]
+            if not core_url:
+                continue
+
+            entry_hash = _hash_entry(core_url)
             cursor.execute(
                 "SELECT id FROM autopilot_queue WHERE source_hash = ?",
                 (entry_hash,)
@@ -130,9 +178,13 @@ def sync_queue_to_db(entries: List[str]) -> int:
             if cursor.fetchone() is None:
                 cursor.execute("""
                     INSERT INTO autopilot_queue
-                        (source_entry, source_hash, status, queued_at, updated_at)
-                    VALUES (?, ?, 'QUEUED', ?, ?)
-                """, (entry, entry_hash, now_iso, now_iso))
+                        (source_entry, source_hash, channel, rights_confirmed, status, queued_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'QUEUED', ?, ?)
+                """, (
+                    entry, entry_hash, parsed.get("channel") or None,
+                    1 if parsed.get("rights_confirmed") else 0,
+                    now_iso, now_iso
+                ))
                 new_count += 1
         conn.commit()
 
@@ -169,7 +221,7 @@ def get_retryable_jobs() -> List[Dict[str, Any]]:
 
 
 def update_job_status(job_id: int, status: str, error_message: str = None,
-                      num_clips: int = None):
+                      num_clips: int = None, clip_ids: str = None):
     """Update autopilot job status with timestamp tracking."""
     now_iso = datetime.now().isoformat()
     with _get_connection() as conn:
@@ -194,6 +246,10 @@ def update_job_status(job_id: int, status: str, error_message: str = None,
         if num_clips is not None:
             updates.append("num_clips_produced = ?")
             params.append(num_clips)
+
+        if clip_ids is not None:
+            updates.append("clip_ids = ?")
+            params.append(clip_ids)
 
         params.append(job_id)
         cursor.execute(
@@ -244,36 +300,48 @@ def process_single_job(job: Dict[str, Any],
     Process one autopilot queue entry through the existing repurpose pipeline.
     Returns the pipeline result dict.
     """
-    entry = job["source_entry"]
+    raw_entry = job["source_entry"]
     job_id = job["id"]
 
-    log(f"Autopilot processing job #{job_id}: {entry}")
+    parsed = parse_queue_line(raw_entry)
+    core_url = parsed["url"] or raw_entry
+    is_yt = _is_youtube_url(core_url)
+    effective_rights = confirm_rights or parsed.get("rights_confirmed") or (job.get("rights_confirmed") == 1)
+
+    log(f"Autopilot processing job #{job_id}: {core_url}")
     update_job_status(job_id, "PROCESSING")
 
     try:
         # YouTube sources MUST have rights confirmed
-        is_yt = _is_youtube_url(entry)
-        if is_yt and not confirm_rights:
+        if is_yt and not effective_rights:
             raise PermissionError(
                 "Autopilot requires --confirm-rights for YouTube sources. "
                 "Skipping to protect against unauthorized repurposing."
             )
 
+        # Parse preferred timestamps if present
+        timestamps = parsed.get("timestamps") or None
+        if not timestamps and job.get("preferred_start") is not None and job.get("preferred_end") is not None:
+            timestamps = f"{job['preferred_start']}-{job['preferred_end']}"
+
         result = run_repurpose_pipeline(
-            url_or_path=entry,
-            confirm_rights=confirm_rights and is_yt,
+            url_or_path=core_url,
+            confirm_rights=effective_rights and is_yt,
             num_clips=num_clips,
             clip_duration=clip_duration,
             reframing=reframing,
             preset=preset,
             theme=theme,
+            timestamps=timestamps,
             burn_subtitles=True,
             preview_only=False,
             upload_dropbox=True,
         )
 
-        clips_count = len(result.get("clips", []))
-        update_job_status(job_id, "COMPLETED", num_clips=clips_count)
+        clips = result.get("clips", [])
+        clips_count = len(clips)
+        clip_ids_str = ",".join(c.get("clip_id", "") for c in clips if c.get("clip_id"))
+        update_job_status(job_id, "COMPLETED", num_clips=clips_count, clip_ids=clip_ids_str)
         log(f"Autopilot job #{job_id} completed: {clips_count} clips produced.")
         return result
 

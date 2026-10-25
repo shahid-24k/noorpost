@@ -482,6 +482,39 @@ class TestCliRoutingAndWorkerIsolation(unittest.TestCase):
         finally:
             autopilot._queue_lock.release()
 
+    def test_parse_structured_queue_entry(self):
+        """Verify structured lines with creator, rights confirmation, and timestamps are parsed accurately."""
+        from autopilot import parse_queue_line
+        line = "https://www.youtube.com/watch?v=TEST_STRUCT | Scholar Name | YES | 01:15-02:00"
+        parsed = parse_queue_line(line)
+        self.assertEqual(parsed["url"], "https://www.youtube.com/watch?v=TEST_STRUCT")
+        self.assertEqual(parsed["channel"], "Scholar Name")
+        self.assertTrue(parsed["rights_confirmed"])
+        self.assertEqual(parsed["timestamps"], "01:15-02:00")
+
+    def test_sync_structured_queue_entries(self):
+        """Verify sync_queue_to_db records channel and rights_confirmed columns."""
+        from autopilot import sync_queue_to_db, list_all_jobs
+        with _get_connection() as conn:
+            conn.execute("DELETE FROM autopilot_queue")
+            conn.commit()
+
+        entries = [
+            "https://www.youtube.com/watch?v=STRUCT1 | Channel A | YES | 00:30-01:15",
+            "https://www.youtube.com/watch?v=STRUCT2 | Channel B | NO"
+        ]
+        sync_queue_to_db(entries)
+
+        jobs = list_all_jobs()
+        self.assertEqual(len(jobs), 2)
+        j1 = next(j for j in jobs if "STRUCT1" in j["source_entry"])
+        j2 = next(j for j in jobs if "STRUCT2" in j["source_entry"])
+
+        self.assertEqual(j1.get("channel"), "Channel A")
+        self.assertEqual(j1.get("rights_confirmed"), 1)
+        self.assertEqual(j2.get("channel"), "Channel B")
+        self.assertEqual(j2.get("rights_confirmed"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

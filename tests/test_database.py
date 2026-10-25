@@ -62,5 +62,46 @@ class TestDatabase(unittest.TestCase):
             conn.execute("DELETE FROM video_records WHERE id = ?", (vid,))
             conn.commit()
 
+    def test_upsert_content_item_and_string_identifier_deduplication(self):
+        """Verify upsert_content_item returns valid integer ID and is_recent_duplicate works with string IDs."""
+        from database import upsert_content_item, compute_content_hash
+
+        item = {
+            "id": "sunnah_bukhari_test_123",
+            "category": "prophetic_hadith",
+            "type": "Prophetic Hadith",
+            "arabic": "إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ",
+            "translation": "Actions are but by intention.",
+            "source": "Sahih Bukhari 1",
+            "is_verified": 1,
+            "review_status": "approved"
+        }
+
+        row_id = upsert_content_item(item)
+        self.assertIsInstance(row_id, int)
+        self.assertGreater(row_id, 0)
+
+        # Before publication, not a duplicate
+        self.assertFalse(is_recent_duplicate(row_id, hours=24))
+        self.assertFalse(is_recent_duplicate("sunnah_bukhari_test_123", hours=24))
+
+        # Record publication using row_id
+        vid = record_video(row_id, "dummy_hadith.mp4", "dummy_hadith.jpg", "caption", "dark-gold", "amiri", 15)
+        record_publication(vid, "dropbox_make", "success")
+
+        # Now duplicate checks should match by row_id, string external id, AND content hash
+        chash = compute_content_hash(item["arabic"], item["source"])
+        self.assertTrue(is_recent_duplicate(row_id, hours=24))
+        self.assertTrue(is_recent_duplicate("sunnah_bukhari_test_123", hours=24))
+        self.assertTrue(is_recent_duplicate(chash, hours=24))
+
+        # Clean up
+        with _get_connection() as conn:
+            conn.execute("DELETE FROM publication_history WHERE video_id = ?", (vid,))
+            conn.execute("DELETE FROM video_records WHERE id = ?", (vid,))
+            conn.execute("DELETE FROM duas_meta WHERE id = ?", (row_id,))
+            conn.commit()
+
+
 if __name__ == "__main__":
     unittest.main()

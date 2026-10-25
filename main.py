@@ -232,6 +232,7 @@ def main(argv=None):
     parser.add_argument("--autopilot-status", action="store_true", help="Show autopilot queue status")
     parser.add_argument("--autopilot-retry", action="store_true", help="Retry failed autopilot jobs")
     parser.add_argument("--interval", "--autopilot-interval", dest="interval", type=int, default=None, help="Autopilot polling interval in minutes (default: 60)")
+    parser.add_argument("--discover-channels", action="store_true", help="Discover authorized videos from approved_channels.txt")
 
     # Daily Scheduler args
     parser.add_argument("--scheduler", "--daily-scheduler", action="store_true", help="Start the daily Islamic content posting scheduler")
@@ -264,6 +265,12 @@ def main(argv=None):
         return
 
     # ── Autopilot Handlers ──
+    if args.discover_channels:
+        from channel_discovery import run_channel_discovery
+        res = run_channel_discovery()
+        print(f"[NoorPost] Channel discovery completed: {res.get('discovered_videos', 0)} new video(s) queued.")
+        return
+
     if args.autopilot_status:
         print_autopilot_status()
         return
@@ -419,6 +426,29 @@ def main(argv=None):
             force_sahih_hadith=args.hadith_sahih,
             enable_audio=not args.no_nasheed,
         )
+
+        # Process up to MAX_LECTURE_REELS_PER_RUN eligible lecture reels
+        max_extra = getattr(config, "MAX_LECTURE_REELS_PER_RUN", 1)
+        if max_extra > 0 and not args.preview:
+            try:
+                from channel_discovery import run_channel_discovery
+                run_channel_discovery(max_new_videos=max_extra)
+
+                from autopilot import get_pending_jobs, process_single_job
+                pending = get_pending_jobs()
+                if pending:
+                    log(f"🎬 Processing up to {max_extra} extra eligible lecture Reel(s) from queue...")
+                    for job in pending[:max_extra]:
+                        process_single_job(
+                            job=job,
+                            confirm_rights=True,
+                            preset=args.preset or "balanced",
+                            theme=args.theme or "midnight-gold",
+                            num_clips=1
+                        )
+            except Exception as e:
+                log(f"ℹ️  Extra lecture processing notice: {e}", level="INFO")
+
         return
 
     # Daily Scheduler
