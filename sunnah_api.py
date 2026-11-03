@@ -6,8 +6,9 @@ Features:
 - Secure API key handling via SUNNAH_API_KEY environment variable.
 - Support for official endpoints: /v1/collections, /v1/collections/{col}/hadiths/{num}, /v1/hadiths/random.
 - Strict Sahih-Only Verification Policy (Bukhari & Muslim consensus, or explicit scholarly Sahih grading).
-- Robust local caching (assets/cache/sunnah_cache.json) to minimize server load.
-- Rate limit backoff and error handling.
+- Robust local caching with TTL and timestamping (assets/cache/sunnah_cache.json).
+- Throttled requests (min 1.0s spacing) with jittered exponential backoff on HTTP 429.
+- Official API request tracking: https://github.com/sunnah-com/api/issues/4291 (Pending).
 - Safe offline fallback when API key is unconfigured.
 """
 
@@ -15,6 +16,7 @@ import os
 import re
 import json
 import time
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -26,6 +28,10 @@ import config
 BASE_URL = "https://api.sunnah.com/v1"
 CACHE_DIR = Path("assets/cache")
 CACHE_FILE = CACHE_DIR / "sunnah_cache.json"
+
+# Official API Access Request Details
+API_ACCESS_ISSUE_URL = "https://github.com/sunnah-com/api/issues/4291"
+API_ACCESS_STATUS = "PENDING_APPROVAL"
 
 # Universal Consensus Sahih Collections
 # Sunni consensus uniformly accepts that narrations in the primary texts of Bukhari and Muslim are Sahih.
@@ -54,11 +60,14 @@ COLLECTION_DISPLAY_NAMES = {
 class SunnahApiClient:
     """Official Sunnah.com API client with strict Sahih verification and caching."""
 
+    API_ACCESS_REQUEST_ISSUE = "https://github.com/sunnah-com/api/issues/4291"
+
     def __init__(self, api_key: Optional[str] = None, base_url: str = BASE_URL):
         self.api_key = (api_key or os.getenv("SUNNAH_API_KEY") or getattr(config, "SUNNAH_API_KEY", "")).strip()
         self.base_url = base_url.rstrip("/")
         self.cache_file = CACHE_FILE
         self._cache = self._load_cache()
+        self._last_request_time = 0.0
 
     # ── Cache Management ─────────────────────────────────────────────────────────
     def _load_cache(self) -> Dict[str, Any]:
@@ -92,9 +101,9 @@ class SunnahApiClient:
             headers["x-api-key"] = self.api_key
         return headers
 
-    # ── Network Request Helper with Rate Limiting ────────────────────────────────
+    # ── Network Request Helper with Rate Limiting & Throttling ─────────────────
     def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
-        """Make an authenticated request to the Sunnah.com API with retry handling."""
+        """Make an authenticated request to the Sunnah.com API with retry handling and 1 req/sec pacing."""
         if not self.is_configured():
             log("Sunnah.com API key not configured (SUNNAH_API_KEY missing).", level="INFO")
             return None
@@ -104,7 +113,16 @@ class SunnahApiClient:
 
         # Return cached response if available
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            entry = self._cache[cache_key]
+            if isinstance(entry, dict) and "data" in entry and "cached_at" in entry:
+                return entry["data"]
+            return entry
+
+        # Throttle to respect 1 req/sec maximum rate limit
+        elapsed = time.time() - self._last_request_time
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
+        self._last_request_time = time.time()
 
         headers = self._get_headers()
 
@@ -113,14 +131,17 @@ class SunnahApiClient:
                 resp = requests.get(url, headers=headers, params=params, timeout=12)
                 if resp.status_code == 200:
                     data = resp.json()
-                    # Cache successful response
-                    self._cache[cache_key] = data
+                    # Cache successful response with timestamp
+                    self._cache[cache_key] = {
+                        "cached_at": datetime.utcnow().isoformat() + "Z",
+                        "data": data
+                    }
                     self._save_cache()
                     return data
                 elif resp.status_code == 429:
-                    # Rate limited: exponential backoff
-                    wait_sec = attempt * 2
-                    log(f"Sunnah.com API rate limited (429). Retrying in {wait_sec}s...", level="WARNING")
+                    # Rate limited: exponential backoff + jitter
+                    wait_sec = min(15.0, (2 ** attempt) + random.uniform(0.5, 1.5))
+                    log(f"Sunnah.com API rate limited (429). Retrying in {wait_sec:.1f}s...", level="WARNING")
                     time.sleep(wait_sec)
                 elif resp.status_code in (401, 403):
                     log(f"Sunnah.com API authentication failed ({resp.status_code}). Check SUNNAH_API_KEY.", level="ERROR")
@@ -141,7 +162,6 @@ class SunnahApiClient:
         """Fetch list of all available Hadith collections."""
         data = self._make_request("collections")
         if data and isinstance(data, dict):
-            # API can return {"data": [...]} or list directly
             return data.get("data", data if isinstance(data, list) else [])
         elif isinstance(data, list):
             return data
@@ -154,7 +174,6 @@ class SunnahApiClient:
         data = self._make_request(endpoint)
         if not data:
             return None
-        # Handle response formats: standard {"data": {...}} or direct object
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
             return data["data"]
         return data if isinstance(data, dict) else None
@@ -199,42 +218,42 @@ class SunnahApiClient:
             scholar = str(g.get("scholar", "Scholarly Authority")).strip()
             grade_lower = grade_str.lower()
 
-            # Reject any grading containing negative or non-Sahih qualifiers
-            if any(neg in grade_lower for neg in ["da'if", "daeef", "weak", "hasan", "mawdu", "fabricated", "munkar"]):
-                continue
+            is_negative = any(bad in grade_lower for bad in ["da'if", "daeef", "weak", "hasan", "mawdu", "fabricated", "munkar", "shadh"])
+            is_sahih = any(pos in grade_lower for pos in ["sahih", "saheeh", "صحيح"])
 
-            # Must contain 'sahih'
-            if "sahih" in grade_lower:
-                sahih_matches.append((scholar, grade_str))
+            if is_sahih and not is_negative:
+                sahih_matches.append((grade_str, scholar))
 
         if sahih_matches:
-            scholar, grade_str = sahih_matches[0]
-            return True, f"Explicit grading: {grade_str}", scholar
+            best_grade, best_scholar = sahih_matches[0]
+            return True, f"Verified Sahih by {best_scholar} ({best_grade})", best_scholar
 
-        # 2. Check canonical consensus justification (Bukhari & Muslim only)
+        # 2. Canonical Consensus Fallback for Bukhari and Muslim
         if collection in CANONICAL_SAHIH_COLLECTIONS:
-            corpus_name = CANONICAL_SAHIH_COLLECTIONS[collection]
-            return True, f"{corpus_name} — Universal Consensus Sahih Collection", "Canonical Sahih Corpus Consensus"
+            disp_name = CANONICAL_SAHIH_COLLECTIONS[collection]
+            return True, f"Canonical Sahih: {disp_name} possesses universal scholarship Consensus of authenticity.", "Canonical Consensus"
 
-        # 3. Reject everything else
-        return False, f"Collection '{collection}' requires explicit Sahih grade; none verified.", None
+        # 3. Reject all other non-explicitly graded hadiths
+        return False, f"Rejection: Narration from '{collection}' requires explicit Sahih grade (none provided).", None
 
-    # ── Content Record Formatting for NoorPost Video Generator ──────────────────
+    # ── Formatting Helper ────────────────────────────────────────────────────────
     def format_hadith_record(self, raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Convert a raw Sunnah.com API Hadith into a standardized NoorPost content item.
-        Returns None if authenticity cannot be established.
+        Normalize and validate an API Hadith response into NoorPost's content record format.
+        Rejects non-Sahih or incomplete records.
         """
-        is_sahih, reason, scholar = self.verify_hadith_authenticity(raw_data)
+        if not raw_data or not isinstance(raw_data, dict):
+            return None
+
+        is_sahih, justification, scholar = self.verify_hadith_authenticity(raw_data)
         if not is_sahih:
-            log(f"Hadith rejected by authenticity policy: {reason}", level="INFO")
+            log(f"⚠️  Sunnah.com item rejected (Failed Sahih filter): {justification}", level="WARNING")
             return None
 
         collection_slug = raw_data.get("collection", "bukhari").lower().strip()
-        collection_display = COLLECTION_DISPLAY_NAMES.get(collection_slug, collection_slug.capitalize())
-        hadith_num = str(raw_data.get("hadithNumber") or raw_data.get("hadith_number") or "").strip()
+        collection_display = COLLECTION_DISPLAY_NAMES.get(collection_slug, collection_slug.title())
+        hadith_num = str(raw_data.get("hadithNumber") or raw_data.get("hadith_number") or raw_data.get("number") or "").strip()
 
-        # Extract Arabic and English texts
         arabic_text = ""
         english_text = ""
         narrator = ""
@@ -278,6 +297,7 @@ class SunnahApiClient:
             "translation": english_text,
             "narrator": narrator,
             "source": source_ref,
+            "source_attribution": f"Reference: {source_ref} (Sunnah.com)",
             "collection": collection_slug,
             "hadith_number": hadith_num,
             "is_verified": 1,

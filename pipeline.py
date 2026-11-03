@@ -191,6 +191,13 @@ def generate_media(
         category=cat_key,
     )
 
+    if audio_info and audio_info.get("track_id"):
+        try:
+            from database import record_nasheed_usage
+            record_nasheed_usage(audio_info["track_id"], audio_info.get("track_title", ""))
+        except Exception as e:
+            log(f"Nasheed usage tracking notice: {e}", level="WARNING")
+
     return {
         "video_id": video_id,
         "video_path": video_path,

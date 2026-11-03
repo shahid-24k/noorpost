@@ -108,6 +108,7 @@ def parse_queue_line(line: str) -> Dict[str, Any]:
         "url": url,
         "channel": channel,
         "rights_confirmed": rights_confirmed,
+        "rights_confirmed_str": rights_str,
         "timestamps": timestamps,
         "raw_entry": stripped
     }
@@ -281,6 +282,66 @@ def list_all_jobs(status_filter: Optional[str] = None,
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CORE PROCESSOR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def is_source_rights_confirmed(job: Dict[str, Any], parsed: Dict[str, Any], url: str) -> bool:
+    """
+    Strictly verifies whether a source has independently recorded permission or ownership.
+    Rules:
+    1. Local files on disk (not starting with http/https) are user-owned local media and authorized.
+    2. YouTube / remote URLs MUST have explicit positive authorization evidence:
+       - parsed['rights_confirmed'] is True (explicit 'YES' in queue entry)
+       - OR job['rights_confirmed'] == 1 (recorded verified authorization in DB)
+       - OR the source channel is explicitly listed in approved_channels.txt with RIGHTS_CONFIRMED == YES
+    3. Explicit negative confirmation ('NO', False) permanently blocks processing.
+    4. Missing confirmation (blank, omitted) is treated as UNCONFIRMED (False).
+    5. A global CLI flag or function parameter CANNOT override a missing or negative authorization on a specific source!
+    """
+    if not _is_youtube_url(url):
+        return True  # Local file
+
+    # Explicit negative confirmation in queue line permanently blocks
+    if parsed.get("rights_confirmed") is False:
+        raw_rights = str(parsed.get("rights_confirmed_str", "")).lower()
+        if raw_rights in ("no", "false", "0", "denied"):
+            return False
+
+    # Positive confirmation in queue entry
+    if parsed.get("rights_confirmed") is True:
+        return True
+
+    # Positive confirmation in DB record
+    if job.get("rights_confirmed") == 1:
+        return True
+
+    # Positive confirmation in approved_channels.txt
+    try:
+        from channel_discovery import parse_approved_channels
+        approved_list = parse_approved_channels()
+        job_channel = str(job.get("channel") or parsed.get("channel") or "").strip().lower()
+        for ac in approved_list:
+            if ac.get("rights_confirmed") is True:
+                ac_name = str(ac.get("name", "")).strip().lower()
+                ac_id = str(ac.get("id", "")).strip().lower()
+                if (ac_name and ac_name == job_channel) or (ac_id and (ac_id in url.lower() or ac_id == job_channel)):
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
+def get_authorized_pending_jobs() -> List[Dict[str, Any]]:
+    """Retrieve only pending jobs with independently verified rights confirmation or local files."""
+    init_autopilot_db()
+    pending = get_pending_jobs()
+    authorized = []
+    for j in pending:
+        parsed = parse_queue_line(j["source_entry"])
+        url = parsed["url"] or j["source_entry"]
+        if is_source_rights_confirmed(j, parsed, url):
+            authorized.append(j)
+    return authorized
+
 def _is_youtube_url(entry: str) -> bool:
     """Quick check if entry looks like a YouTube URL."""
     return bool(re.match(
@@ -290,7 +351,7 @@ def _is_youtube_url(entry: str) -> bool:
 
 
 def process_single_job(job: Dict[str, Any],
-                       confirm_rights: bool = True,
+                       confirm_rights: bool = False,
                        num_clips: int = 3,
                        clip_duration: float = 45.0,
                        preset: str = "balanced",
@@ -299,6 +360,7 @@ def process_single_job(job: Dict[str, Any],
     """
     Process one autopilot queue entry through the existing repurpose pipeline.
     Returns the pipeline result dict.
+    Strictly verifies independent rights confirmation for YouTube sources.
     """
     raw_entry = job["source_entry"]
     job_id = job["id"]
@@ -306,17 +368,23 @@ def process_single_job(job: Dict[str, Any],
     parsed = parse_queue_line(raw_entry)
     core_url = parsed["url"] or raw_entry
     is_yt = _is_youtube_url(core_url)
-    effective_rights = confirm_rights or parsed.get("rights_confirmed") or (job.get("rights_confirmed") == 1)
+
+    # Independent rights verification:
+    # A source MUST have independently recorded permission.
+    # confirm_rights parameter cannot override a source's missing or negative authorization!
+    has_rights = is_source_rights_confirmed(job, parsed, core_url)
+    effective_rights = has_rights and (confirm_rights or parsed.get("rights_confirmed") or (job.get("rights_confirmed") == 1))
 
     log(f"Autopilot processing job #{job_id}: {core_url}")
     update_job_status(job_id, "PROCESSING")
 
     try:
-        # YouTube sources MUST have rights confirmed
-        if is_yt and not effective_rights:
+        # YouTube sources MUST have rights confirmed independently
+        if is_yt and not has_rights:
             raise PermissionError(
-                "Autopilot requires --confirm-rights for YouTube sources. "
-                "Skipping to protect against unauthorized repurposing."
+                "Autopilot requires independently confirmed rights for YouTube sources. "
+                "Explicit authorization required in source_queue.txt (RIGHTS_CONFIRMED=YES) "
+                "or approved_channels.txt. Skipping to protect against unauthorized repurposing."
             )
 
         # Parse preferred timestamps if present
@@ -355,7 +423,7 @@ def process_single_job(job: Dict[str, Any],
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RUN MODES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def run_queue_once(confirm_rights: bool = True,
+def run_queue_once(confirm_rights: bool = False,
                    num_clips: int = 3,
                    clip_duration: float = 45.0,
                    preset: str = "balanced",
@@ -413,7 +481,7 @@ def run_queue_once(confirm_rights: bool = True,
         _queue_lock.release()
 
 
-def retry_failed_queue_jobs(confirm_rights: bool = True,
+def retry_failed_queue_jobs(confirm_rights: bool = False,
                             **kwargs) -> Dict[str, Any]:
     """Retry all FAILED autopilot jobs that haven't exceeded max_attempts."""
     init_autopilot_db()
@@ -454,7 +522,7 @@ def _autopilot_job_listener(event):
 
 def start_autopilot_scheduler(
     interval_minutes: int = None,
-    confirm_rights: bool = True,
+    confirm_rights: bool = False,
     num_clips: int = 3,
     clip_duration: float = 45.0,
     preset: str = "balanced",

@@ -434,14 +434,14 @@ def main(argv=None):
                 from channel_discovery import run_channel_discovery
                 run_channel_discovery(max_new_videos=max_extra)
 
-                from autopilot import get_pending_jobs, process_single_job
-                pending = get_pending_jobs()
+                from autopilot import get_authorized_pending_jobs, process_single_job
+                pending = get_authorized_pending_jobs()
                 if pending:
-                    log(f"🎬 Processing up to {max_extra} extra eligible lecture Reel(s) from queue...")
+                    log(f"🎬 Processing up to {max_extra} extra authorized lecture Reel(s) from queue...")
                     for job in pending[:max_extra]:
                         process_single_job(
                             job=job,
-                            confirm_rights=True,
+                            confirm_rights=False,
                             preset=args.preset or "balanced",
                             theme=args.theme or "midnight-gold",
                             num_clips=1
