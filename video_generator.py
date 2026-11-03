@@ -1,368 +1,489 @@
 """
-video_generator.py — Arabic rendered via wkhtmltoimage (perfect RTL shaping)
-Latin text via Pillow. Full 1080x1920 Islamic video generator.
+video_generator.py — Professional 1080x1920 Islamic Video Engine for NoorPost Ultimate
+Generates high-definition vertical videos for Instagram Reels and YouTube Shorts.
+Features:
+  - 7 Curated Islamic Visual Themes (procedural gradients & geometric art)
+  - Flawless Arabic typography via arabic-reshaper + python-bidi
+  - Multiple content layouts (Dua, Quranic Verse, Islamic Reminder)
+  - Dynamic font scaling & intelligent multi-scene splitting for long texts
+  - Configurable rendering presets (fast, balanced, high_quality)
+  - Subtle Ken Burns zoom and smooth fade transitions
+  - Complete audio integration with graceful silent fallbacks
 """
 
-import textwrap
 import os
-import random
-import subprocess
-import json
+import sys
+import uuid
+import tempfile
+import textwrap
 from datetime import datetime
 from pathlib import Path
-import urllib.request
+from typing import Dict, Any, Tuple, List, Optional
+
+# Monkeypatch Pillow for MoviePy compatibility (Pillow 10 removed Image.ANTIALIAS)
+import PIL.Image
+if not hasattr(PIL.Image, "ANTIALIAS"):
+    PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
 
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, AudioFileClip
+
+# Support both MoviePy 1.x and 2.x
+try:
+    from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips
+except ImportError:
+    from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips
 
 import config
-
-OUTPUT_DIR = Path("output_videos")
-OUTPUT_DIR.mkdir(exist_ok=True)
-FONTS_DIR  = Path("assets/fonts")
-FONTS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ─────────────────────────────────────────────
-# FONT REGISTRY
-# ─────────────────────────────────────────────
-ARABIC_FONTS = {
-    "amiri": {
-        "file": "assets/fonts/Amiri-Regular.ttf",
-        "url":  None,
-    },
-    "scheherazade": {
-        "file": "assets/fonts/Scheherazade-Regular.ttf",
-        "url":  "https://github.com/silnrsi/font-scheherazade/releases/download/v3.300/Scheherazade-Regular.ttf",
-    },
-    "noto": {
-        "file": "assets/fonts/NotoNaskhArabic-Regular.ttf",
-        "url":  "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf",
-    },
-}
-
-THEMES = {
-    "dark-gold": {
-        "bg":        (8,   11,  16),
-        "gold":      (201, 168,  76),
-        "gold_dim":  (122,  97,  40),
-        "white":     (232, 228, 217),
-        "dim":       (122, 135, 153),
-        "bg_hex":    "#080b10",
-        "gold_hex":  "#c9a84c",
-        "dim_hex":   "#7a8799",
-        "white_hex": "#e8e4d9",
-        "gdim_hex":  "#7a6128",
-    },
-    "navy": {
-        "bg":        (8,   18,  40),
-        "gold":      (192, 160,  64),
-        "gold_dim":  (100,  80,  30),
-        "white":     (220, 230, 255),
-        "dim":       (100, 120, 160),
-        "bg_hex":    "#08122a",
-        "gold_hex":  "#c0a040",
-        "dim_hex":   "#6478a0",
-        "white_hex": "#dce6ff",
-        "gdim_hex":  "#64501e",
-    },
-    "green": {
-        "bg":        (6,   22,  14),
-        "gold":      (180, 160,  60),
-        "gold_dim":  (90,   80,  30),
-        "white":     (220, 240, 225),
-        "dim":       (90,  130, 100),
-        "bg_hex":    "#06160e",
-        "gold_hex":  "#b4a03c",
-        "dim_hex":   "#5a8264",
-        "white_hex": "#dcf0e1",
-        "gdim_hex":  "#5a501e",
-    },
-    "pure-black": {
-        "bg":        (0,    0,   0),
-        "gold":      (220, 190,  80),
-        "gold_dim":  (130, 110,  45),
-        "white":     (255, 255, 255),
-        "dim":       (160, 160, 160),
-        "bg_hex":    "#000000",
-        "gold_hex":  "#dcc050",
-        "dim_hex":   "#a0a0a0",
-        "white_hex": "#ffffff",
-        "gdim_hex":  "#826e2d",
-    },
-}
-
-
+from logger import log
+from themes import THEMES, resolve_theme, render_themed_background, draw_8point_star
+# Backward compatibility aliases
+from themes import resolve_theme
 def resolve_font_path() -> str:
-    mode = getattr(config, "FONT_MODE", "amiri").lower()
-    if mode == "random":
-        mode = random.choice(list(ARABIC_FONTS.keys()))
-    font = ARABIC_FONTS.get(mode, ARABIC_FONTS["amiri"])
-    path = Path(font["file"])
-    if not path.exists() and font["url"]:
-        try:
-            print(f"[Video] Downloading font: {mode}...")
-            urllib.request.urlretrieve(font["url"], str(path))
-            if path.stat().st_size < 10000:
-                path.unlink()
-                path = Path(ARABIC_FONTS["amiri"]["file"])
-        except:
-            path = Path(ARABIC_FONTS["amiri"]["file"])
-    print(f"[Video] Font: {mode} -> {path}")
-    return str(path)
+    return str(config.FONT_ARABIC)
 
-
-def resolve_theme() -> dict:
-    mode = getattr(config, "THEME_MODE", "dark-gold").lower()
-    if mode == "random":
-        mode = random.choice(list(THEMES.keys()))
-    theme = THEMES.get(mode, THEMES["dark-gold"])
-    print(f"[Video] Theme: {mode}")
-    return theme
-
+# Arabic text shaping libraries
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    HAS_ARABIC_SUPPORT = True
+except ImportError:
+    HAS_ARABIC_SUPPORT = False
 
 # ─────────────────────────────────────────────
-# WKHTMLTOIMAGE ARABIC RENDERER
+# RENDERING PRESETS
+# ─────────────────────────────────────────────
+PRESETS = {
+    "fast": {
+        "fps": 15,
+        "zoom": False,
+        "fade_duration": 0.5,
+        "ffmpeg_preset": "ultrafast",
+        "crf": 23,
+        "bitrate": "2500k",
+    },
+    "balanced": {
+        "fps": 24,
+        "zoom": True,
+        "zoom_rate": 0.002,   # 1.0 to ~1.03 over 15s
+        "fade_duration": 0.8,
+        "ffmpeg_preset": "fast",
+        "crf": 20,
+        "bitrate": "4500k",
+    },
+    "high_quality": {
+        "fps": 30,
+        "zoom": True,
+        "zoom_rate": 0.003,   # 1.0 to ~1.045 over 15s
+        "fade_duration": 1.0,
+        "ffmpeg_preset": "medium",
+        "crf": 18,
+        "bitrate": "6500k",
+    },
+}
+
+# ─────────────────────────────────────────────
+# FONT RESOLUTION & TYPOGRAPHY
 # ─────────────────────────────────────────────
 
-def render_arabic_html(text: str, font_path: str, font_size: int,
-                        color_hex: str, bg_hex: str, canvas_w: int) -> Image.Image:
-    """
-    Render Arabic text via wkhtmltoimage using local font.
-    Returns a PIL Image with the rendered Arabic text.
-    """
-    abs_font = str(Path(font_path).resolve())
-
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<style>
-@font-face {{ font-family:'ArabicFont'; src:url('{abs_font}'); }}
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:{bg_hex}; width:{canvas_w}px; overflow:hidden; }}
-p {{
-  font-family:'ArabicFont',serif;
-  font-size:{font_size}px;
-  color:{color_hex};
-  direction:rtl;
-  text-align:center;
-  padding:10px 20px;
-  line-height:1.8;
-  word-spacing:4px;
-}}
-</style></head>
-<body><p>{text}</p></body></html>"""
-
-    html_path = "/tmp/_arabic_render.html"
-    img_path  = "/tmp/_arabic_render.png"
-
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
+def get_font(path: str, size: int) -> ImageFont.ImageFont:
+    """Load truetype font with safe default fallback."""
     try:
-        result = subprocess.run([
-            "wkhtmltoimage",
-            "--width", str(canvas_w),
-            "--quality", "100",
-            "--format", "png",
-            html_path, img_path
-        ], capture_output=True, timeout=20)
+        p = Path(path)
+        if p.exists():
+            return ImageFont.truetype(str(p), size)
+        for cand in config.FONTS_DIR.glob("*.ttf"):
+            if "amiri" in cand.name.lower() or "noto" in cand.name.lower():
+                return ImageFont.truetype(str(cand), size)
+    except Exception:
+        pass
+    return ImageFont.load_default()
 
-        if Path(img_path).exists():
-            img = Image.open(img_path).convert("RGB")
-            return img
-    except Exception as e:
-        print(f"[Video] wkhtmltoimage error: {e}")
+def wrap_and_shape_arabic(text: str, font: ImageFont.ImageFont, max_width: int, draw: ImageDraw.ImageDraw) -> List[str]:
+    """Word-wrap Arabic text while accurately measuring reshaped ligatures."""
+    words = text.strip().split()
+    lines = []
+    current = []
 
-    # Fallback: blank image
-    return Image.new("RGB", (canvas_w, font_size + 20),
-                     tuple(int(bg_hex.lstrip('#')[i:i+2], 16) for i in (0,2,4)))
+    for word in words:
+        test_str = " ".join(current + [word])
+        if HAS_ARABIC_SUPPORT:
+            reshaped = arabic_reshaper.reshape(test_str)
+            display_str = get_display(reshaped)
+        else:
+            display_str = test_str
 
+        bbox = draw.textbbox((0, 0), display_str, font=font)
+        w = bbox[2] - bbox[0]
+        if w <= max_width or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
 
-# ─────────────────────────────────────────────
-# PILLOW LATIN + DECORATION HELPERS
-# ─────────────────────────────────────────────
+    if current:
+        lines.append(" ".join(current))
 
-def measure(draw, text, font):
+    shaped_lines = []
+    for line in lines:
+        if HAS_ARABIC_SUPPORT:
+            reshaped = arabic_reshaper.reshape(line)
+            shaped_lines.append(get_display(reshaped))
+        else:
+            shaped_lines.append(line)
+
+    return shaped_lines
+
+def measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> Tuple[int, int]:
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except:
-        return len(text) * 12, 36
+    except Exception:
+        return len(text) * 12, 34
 
+def draw_ornament(draw: ImageDraw.ImageDraw, cx: int, y: int, color: tuple, width: int = 240):
+    """Draw refined Islamic decorative divider."""
+    draw.line([(cx - width, y), (cx + width, y)], fill=color, width=1)
+    draw.ellipse([cx - 5, y - 5, cx + 5, y + 5], fill=color)
+    draw.line([(cx - width // 2, y - 7), (cx + width // 2, y - 7)], fill=color, width=1)
 
-def draw_latin(draw, lines, y, font, color, gap=12):
+# ─────────────────────────────────────────────
+# LAYOUT RENDERING ENGINE
+# ─────────────────────────────────────────────
+
+def render_content_frame(
+    content: Dict[str, Any],
+    theme: Dict[str, Any],
+    layout: str = "dua",
+    scene_mode: str = "full",  # 'full', 'scene1_arabic', 'scene2_translation'
+    show_transliteration: bool = True,
+    show_bismillah: bool = True,
+    show_source: bool = True,
+    show_watermark: bool = True,
+) -> Image.Image:
+    """
+    Render a single 1080x1920 poster frame according to the requested theme and layout.
+    """
     W = config.VIDEO_WIDTH
-    for line in lines:
-        w, h = measure(draw, line, font)
-        draw.text(((W-w)//2, y), line, font=font, fill=color)
-        y += h + gap
-    return y
+    H = config.VIDEO_HEIGHT
+    cx = W // 2
 
-
-def ornament(draw, cx, y, color, width=220):
-    draw.line([(cx-width, y), (cx+width, y)], fill=color, width=1)
-    draw.ellipse([cx-5, y-5, cx+5, y+5], fill=color)
-    draw.line([(cx-width//2, y-10), (cx+width//2, y-10)], fill=color, width=1)
-
-
-def wrap(text, n=45):
-    lines = textwrap.wrap(text, width=n)
-    return lines if lines else [text]
-
-
-# ─────────────────────────────────────────────
-# FRAME RENDERER
-# ─────────────────────────────────────────────
-
-def create_frame(dua: dict, font_path: str, theme: dict) -> Image.Image:
-    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    cx   = W // 2
-    BG   = theme["bg"]
-    GOLD = theme["gold"]
-    GDIM = theme["gold_dim"]
-    BH   = theme["bg_hex"]
-    GH   = theme["gold_hex"]
-
-    try:
-        lg = ImageFont.truetype(config.FONT_LATIN, 32)
-        sm = ImageFont.truetype(config.FONT_LATIN, 20)
-    except:
-        lg = sm = ImageFont.load_default()
-
-    img  = Image.new("RGB", (W, H), BG)
+    # 1. Render thematic background
+    img = render_themed_background(theme, W, H)
     draw = ImageDraw.Draw(img)
 
-    # ── Background glow ──
-    for r in range(600, 0, -8):
-        ratio = (1 - r/600) ** 2
-        c = tuple(int(BG[i] + (GOLD[i]-BG[i])*ratio*0.15) for i in range(3))
-        draw.ellipse([cx-r, H//3-r//2, cx+r, H//3+r//2], fill=c)
+    # 2. Extract theme color palette
+    gold = theme["gold"]
+    gold_dim = theme["gold_dim"]
+    text_primary = theme["text_primary"]
+    text_secondary = theme["text_secondary"]
 
-    # ── Double border ──
-    p = 40
-    draw.rectangle([p, p, W-p, H-p], outline=GDIM, width=1)
-    draw.rectangle([p+14, p+14, W-p-14, H-p-14], outline=GDIM, width=1)
+    # 3. Safe margins & bounding area
+    safe_left = config.SAFE_MARGIN_X
+    safe_right = W - config.SAFE_MARGIN_X
+    max_content_w = safe_right - safe_left
 
-    y = 100
+    # Determine content elements
+    raw_type = content.get("type", content.get("dua_type", "Authentic Dua"))
+    arabic_text = content.get("arabic", "").strip()
+    translation_text = content.get("translation", "").strip()
+    transliteration_text = content.get("transliteration", "").strip()
+    source_text = content.get("source", "").strip()
 
-    # ── Bismillah via wkhtmltoimage ──
-    bism_img = render_arabic_html(
-        "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-        font_path, 44, GH, BH, W
-    )
-    img.paste(bism_img, (0, y))
-    y += bism_img.height + 14
+    # Dynamic font sizing based on Arabic length
+    arabic_len = len(arabic_text)
+    if arabic_len > 140:
+        arabic_size = 40
+        arabic_line_gap = 14
+        trans_size = 28
+    elif arabic_len > 80:
+        arabic_size = 46
+        arabic_line_gap = 16
+        trans_size = 30
+    else:
+        arabic_size = 52
+        arabic_line_gap = 20
+        trans_size = 32
 
-    draw = ImageDraw.Draw(img)
-    ornament(draw, cx, y, GDIM, 300)
-    y += 26
+    # Fonts
+    font_arabic = get_font(config.FONT_ARABIC, arabic_size)
+    font_bism = get_font(config.FONT_ARABIC, 42)
+    font_badge = get_font(config.FONT_BOLD, 22)
+    font_translation = get_font(config.FONT_LATIN, trans_size)
+    font_translit = get_font(config.FONT_LATIN_ITALIC, 22)
+    font_source = get_font(config.FONT_LATIN, 22)
+    font_small = get_font(config.FONT_LATIN, 18)
 
-    # ── Type badge ──
-    badge = f"\u2014 {dua['type'].upper()} \u2014"
-    w, h  = measure(draw, badge, sm)
-    draw.text(((W-w)//2, y), badge, font=sm, fill=GDIM)
-    y += h + 22
+    y = config.SAFE_MARGIN_TOP
 
-    ornament(draw, cx, y, GDIM, 200)
-    y += 32
+    # ── HEADER BADGE ──
+    badge_text = f"— {raw_type.upper()} —"
+    bw, bh = measure_text(draw, badge_text, font_badge)
+    draw.text(((W - bw) // 2, y), badge_text, font=font_badge, fill=gold_dim)
+    y += bh + 20
+    draw_ornament(draw, cx, y, gold_dim, width=220)
+    y += 24
 
-    # ── Arabic dua via wkhtmltoimage ──
-    arabic_img = render_arabic_html(
-        dua["arabic"],
-        font_path, 54, GH, BH, W
-    )
-    img.paste(arabic_img, (0, y))
-    y += arabic_img.height + 24
+    # ── BISMILLAH ──
+    if show_bismillah:
+        bism_text = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"
+        if HAS_ARABIC_SUPPORT:
+            bism_display = get_display(arabic_reshaper.reshape(bism_text))
+        else:
+            bism_display = bism_text
+        bw, bh = measure_text(draw, bism_display, font_bism)
+        draw.text(((W - bw) // 2, y), bism_display, font=font_bism, fill=gold)
+        y += bh + 20
+        draw_ornament(draw, cx, y, gold_dim, width=280)
+        y += 28
 
-    draw = ImageDraw.Draw(img)
-    ornament(draw, cx, y, GDIM, 250)
-    y += 22
+    # ── SCENE HANDLING (Full or Split) ──
+    if scene_mode in ("full", "scene1_arabic"):
+        # Render Arabic Text
+        if arabic_text:
+            arabic_lines = wrap_and_shape_arabic(arabic_text, font_arabic, max_content_w, draw)
+            for line in arabic_lines:
+                lw, lh = measure_text(draw, line, font_arabic)
+                draw.text(((W - lw) // 2, y), line, font=font_arabic, fill=gold)
+                y += lh + arabic_line_gap
+            y += 14
+            draw_ornament(draw, cx, y, gold_dim, width=260)
+            y += 24
 
-    # ── Transliteration ──
-    y = draw_latin(draw, wrap(dua["transliteration"], 46),
-                   y, sm, theme["dim"], gap=8)
-    y += 18
+        # Render Transliteration (if requested)
+        if show_transliteration and transliteration_text and scene_mode != "scene2_translation":
+            translit_lines = textwrap.wrap(transliteration_text, width=44)
+            for tline in translit_lines:
+                tw, th = measure_text(draw, tline, font_translit)
+                draw.text(((W - tw) // 2, y), tline, font=font_translit, fill=text_secondary)
+                y += th + 8
+            y += 16
 
-    # ── Translation ──
-    y = draw_latin(draw, wrap(f'\u201c{dua["translation"]}\u201d', 40),
-                   y, lg, theme["white"], gap=14)
-    y += 22
+    if scene_mode in ("full", "scene2_translation"):
+        # Render English Translation
+        if translation_text:
+            formatted_trans = f"“{translation_text}”"
+            trans_lines = textwrap.wrap(formatted_trans, width=38)
+            for line in trans_lines:
+                lw, lh = measure_text(draw, line, font_translation)
+                draw.text(((W - lw) // 2, y), line, font=font_translation, fill=text_primary)
+                y += lh + 14
+            y += 16
+            draw_ornament(draw, cx, y, gold_dim, width=200)
+            y += 20
 
-    ornament(draw, cx, y, GDIM, 180)
-    y += 18
+    # ── SOURCE ATTRIBUTION ──
+    if show_source and source_text and scene_mode in ("full", "scene2_translation"):
+        source_label = f"Source: {source_text}"
+        sw, sh = measure_text(draw, source_label, font_source)
+        draw.text(((W - sw) // 2, y), source_label, font=font_source, fill=gold_dim)
+        y += sh + 12
 
-    # ── Source ──
-    draw_latin(draw, wrap(f"Source: {dua['source']}", 52),
-               y, sm, GDIM, gap=8)
+    # Multi-scene indicator badge
+    if scene_mode == "scene1_arabic":
+        indicator = "— PART 1 · ARABIC RECITATION —"
+        iw, ih = measure_text(draw, indicator, font_small)
+        draw.text(((W - iw) // 2, H - 120), indicator, font=font_small, fill=gold_dim)
+    elif scene_mode == "scene2_translation":
+        indicator = "— PART 2 · MEANING & REFLECTION —"
+        iw, ih = measure_text(draw, indicator, font_small)
+        draw.text(((W - iw) // 2, H - 120), indicator, font=font_small, fill=gold_dim)
 
-    # ── Watermark ──
-    wm   = "NoorPost \u00b7 Authentic Islamic Content"
-    w, h = measure(draw, wm, sm)
-    draw.text(((W-w)//2, H-85), wm, font=sm, fill=GDIM)
+    # ── WATERMARK & VERIFICATION SEAL ──
+    if show_watermark:
+        wm_text = "NoorPost Ultimate · Authentic Islamic Content"
+        ww, wh = measure_text(draw, wm_text, font_small)
+        draw.text(((W - ww) // 2, H - 85), wm_text, font=font_small, fill=gold_dim)
 
     return img
 
+def create_frame(content: Dict[str, Any], font_path: Optional[str] = None, theme: Optional[Dict[str, Any]] = None) -> Image.Image:
+    """Backward-compatible single-frame renderer."""
+    t = theme if isinstance(theme, dict) else resolve_theme()
+    return render_content_frame(content, t, scene_mode="full")
 
 # ─────────────────────────────────────────────
-# VIDEO GENERATOR
+# MASTER VIDEO PRODUCTION PIPELINE
 # ─────────────────────────────────────────────
 
-def generate_video(dua: dict) -> str:
-    font_path = resolve_font_path()
-    theme     = resolve_theme()
+def generate_video(
+    content: Dict[str, Any],
+    theme: Optional[str] = None,
+    layout: Optional[str] = None,
+    preset: Optional[str] = None,
+    duration: Optional[int] = None,
+    enable_audio: bool = True,
+    enable_animations: Optional[bool] = None,
+    show_transliteration: Optional[bool] = None,
+    show_bismillah: bool = True,
+    show_source: bool = True,
+    show_watermark: bool = True,
+    audio_info: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str]:
+    """
+    Generate professional 1080x1920 video for Instagram Reels and YouTube Shorts.
+    Returns:
+        (video_path, preview_path)
+    """
+    # 1. Resolve configuration defaults
+    theme_cfg = resolve_theme(theme or config.DEFAULT_THEME)
+    layout_name = layout or config.DEFAULT_LAYOUT
+    preset_name = preset or config.DEFAULT_PRESET
+    preset_cfg = PRESETS.get(preset_name, PRESETS["balanced"])
+    video_duration = duration or config.VIDEO_DURATION
 
-    print(f"[Video] Generating: {dua['type']} — {dua['source']}")
+    if enable_animations is None:
+        enable_animations = config.ENABLE_ANIMATIONS
+    if show_transliteration is None:
+        show_transliteration = config.SHOW_TRANSLITERATION
 
-    frame      = create_frame(dua, font_path, theme)
-    frame_path = OUTPUT_DIR / "_frame_temp.png"
-    frame.save(str(frame_path))
+    dua_type = content.get("type", content.get("dua_type", "Authentic Dua"))
+    source = content.get("source", "Sahih")
+    log(f"🎬 Generating {preset_name.upper()} video: [{dua_type}] {source} (Theme: {theme_cfg['name']})")
 
-    timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
-    preview_path = OUTPUT_DIR / f"preview_{timestamp}.jpg"
-    frame.save(str(preview_path), "JPEG", quality=85)
-    print(f"[Video] Preview: {preview_path.name}")
+    # Generate unique output timestamp & identifier
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:6]
+    base_name = f"noorpost_{timestamp}_{unique_id}"
 
-    try:
-        from instagram import get_dropbox_client
-        import dropbox as dbx_module
-        dbx = get_dropbox_client()
-        with open(str(preview_path), "rb") as f:
-            dbx.files_upload(f.read(),
-                f"/NoorPost/previews/preview_{timestamp}.jpg",
-                mode=dbx_module.files.WriteMode("overwrite"))
-        print("[Video] Preview uploaded to Dropbox /NoorPost/previews/")
-    except Exception as e:
-        print(f"[Video] Preview upload skipped: {e}")
+    # 2. Estimate content height to decide single vs multi-scene
+    arabic_text = content.get("arabic", "")
+    trans_text = content.get("translation", "")
+    is_very_long = (len(arabic_text) > 130 and len(trans_text) > 120) or (len(arabic_text) > 200)
 
-    duration = config.VIDEO_DURATION
-    clip     = ImageClip(str(frame_path), duration=duration)
-    clip     = clip.set_fps(config.VIDEO_FPS)
-
-    try:
-        from audio_manager import get_audio_file
-        audio_path = get_audio_file(duration=duration)
-        if audio_path and os.path.exists(audio_path):
-            audio = AudioFileClip(audio_path)
-            audio = audio.subclip(0, min(duration, audio.duration))
-            audio = audio.volumex(0.35).audio_fadeout(2)
-            clip  = clip.set_audio(audio)
-            print("[Video] Nasheed audio added!")
-    except Exception as e:
-        print(f"[Video] Audio skipped: {e}")
-
-    out_path = str(OUTPUT_DIR / f"noorpost_{timestamp}.mp4")
-    clip.write_videofile(
-        out_path,
-        codec="libx264",
-        audio_codec="aac",
-        logger=None,
-        ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+    # 3. Create persistent preview image (always Scene 1 / Full)
+    preview_img = render_content_frame(
+        content, theme_cfg, layout=layout_name,
+        scene_mode="full" if not is_very_long else "scene1_arabic",
+        show_transliteration=show_transliteration,
+        show_bismillah=show_bismillah,
+        show_source=show_source,
+        show_watermark=show_watermark,
     )
+    preview_path = str(config.PREVIEWS_DIR / f"preview_{base_name}.jpg")
+    preview_img.save(preview_path, "JPEG", quality=92)
+    log(f"🖼️  Preview saved: {preview_path}")
 
-    try:
-        frame_path.unlink()
-        preview_path.unlink()
-    except:
-        pass
+    # 4. Build Video Clips (MoviePy)
+    with tempfile.TemporaryDirectory(prefix="noorpost_render_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
 
-    print(f"[Video] Saved: {out_path}")
-    return out_path
+        if not is_very_long:
+            # Single Scene Video
+            frame_path = tmp_path / "frame_full.png"
+            preview_img.save(str(frame_path))
+            clip = ImageClip(str(frame_path), duration=video_duration)
+
+            if enable_animations and preset_cfg.get("zoom"):
+                rate = preset_cfg.get("zoom_rate", 0.002)
+                clip = clip.resize(lambda t: 1.0 + rate * t)
+
+            fade_dur = preset_cfg.get("fade_duration", 0.8)
+            clip = clip.fadein(fade_dur).fadeout(fade_dur)
+            final_video_clip = clip
+
+        else:
+            # Two-Scene Video with Cross-Dissolve Transition
+            scene1_img = preview_img
+            scene2_img = render_content_frame(
+                content, theme_cfg, layout=layout_name,
+                scene_mode="scene2_translation",
+                show_transliteration=show_transliteration,
+                show_bismillah=show_bismillah,
+                show_source=show_source,
+                show_watermark=show_watermark,
+            )
+
+            p1_path = tmp_path / "scene1.png"
+            p2_path = tmp_path / "scene2.png"
+            scene1_img.save(str(p1_path))
+            scene2_img.save(str(p2_path))
+
+            half_duration = video_duration / 2.0
+            clip1 = ImageClip(str(p1_path), duration=half_duration)
+            clip2 = ImageClip(str(p2_path), duration=half_duration)
+
+            if enable_animations and preset_cfg.get("zoom"):
+                rate = preset_cfg.get("zoom_rate", 0.002)
+                clip1 = clip1.resize(lambda t: 1.0 + rate * t)
+                clip2 = clip2.resize(lambda t: 1.0 + rate * t)
+
+            clip1 = clip1.fadein(0.6).fadeout(0.6)
+            clip2 = clip2.fadein(0.6).fadeout(0.6)
+            final_video_clip = concatenate_videoclips([clip1, clip2])
+
+        # Set target Frame Rate
+        fps = preset_cfg.get("fps", 24)
+        final_video_clip = final_video_clip.set_fps(fps)
+
+        # 5. Audio Integration
+        if enable_audio:
+            try:
+                audio_file = None
+                start_time = 0.0
+                vol = getattr(config, "AUDIO_VOLUME", 0.35)
+
+                if audio_info and audio_info.get("audio_path"):
+                    audio_file = audio_info["audio_path"]
+                    start_time = float(audio_info.get("start_time", 0.0))
+                    vol = float(audio_info.get("volume", vol))
+                else:
+                    try:
+                        from nasheed_engine import nasheed_engine
+                        audio_res = nasheed_engine.prepare_audio_for_video(content, video_duration)
+                        if audio_res:
+                            audio_file = audio_res.get("audio_path")
+                            start_time = float(audio_res.get("start_time", 0.0))
+                            vol = float(audio_res.get("volume", vol))
+                    except Exception:
+                        pass
+
+                if not audio_file:
+                    from audio_manager import get_audio_file
+                    audio_file = get_audio_file(duration=video_duration)
+
+                if audio_file and Path(audio_file).exists():
+                    audio = AudioFileClip(audio_file)
+                    if audio.duration > (start_time + video_duration):
+                        audio = audio.subclip(start_time, start_time + video_duration)
+                    else:
+                        audio = audio.subclip(0, min(video_duration, audio.duration))
+                    audio = audio.volumex(vol).audio_fadein(1.0).audio_fadeout(2.0)
+                    final_video_clip = final_video_clip.set_audio(audio)
+                    log(f"🎵 Background audio attached: {Path(audio_file).name} (vol: {vol})")
+            except Exception as e:
+                log(f"⚠️  Audio attachment skipped: {e}", level="WARNING")
+
+        # 6. Encode Video
+        out_path = str(config.OUTPUT_DIR / f"{base_name}.mp4")
+        log(f"🎥 Encoding 1080x1920 video ({preset_name} preset, {fps} fps)...")
+
+        ffmpeg_params = [
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-crf", str(preset_cfg.get("crf", 20)),
+            "-preset", preset_cfg.get("ffmpeg_preset", "fast"),
+        ]
+
+        final_video_clip.write_videofile(
+            out_path,
+            codec="libx264",
+            audio_codec="aac" if final_video_clip.audio is not None else None,
+            bitrate=preset_cfg.get("bitrate", "4500k"),
+            logger=None,
+            ffmpeg_params=ffmpeg_params,
+        )
+
+        try:
+            if final_video_clip.audio is not None:
+                final_video_clip.audio.close()
+            final_video_clip.close()
+        except Exception:
+            pass
+
+    # 7. Validate rendered file
+    out_file = Path(out_path)
+    if not out_file.exists() or out_file.stat().st_size < 10000:
+        raise RuntimeError(f"Video encoding failed or output file is empty: {out_path}")
+
+    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)")
+    return out_path, preview_path

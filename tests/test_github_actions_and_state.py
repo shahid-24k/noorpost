@@ -1,0 +1,206 @@
+"""
+test_github_actions_and_state.py — Tests for GitHub Actions Workflow & Persistent State Sync
+NoorPost Ultimate
+"""
+
+import unittest
+from unittest.mock import patch, MagicMock
+from pathlib import Path
+import json
+
+from state_sync import StateSyncManager, DROPBOX_STATE_FOLDER, DROPBOX_STATE_FILE
+
+
+class TestGitHubActionsWorkflow(unittest.TestCase):
+    """Validate GitHub Actions workflow configuration and structure."""
+
+    def setUp(self):
+        self.workflow_file = Path(".github/workflows/noorpost.yml")
+
+    def test_workflow_file_exists(self):
+        """Verify .github/workflows/noorpost.yml exists."""
+        self.assertTrue(self.workflow_file.exists())
+
+    def test_workflow_preserves_original_schedules(self):
+        """Verify original schedules: 08:00 AM IST (02:30 UTC) and 09:00 PM IST (15:30 UTC)."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("30 2 * * *", content)
+        self.assertIn("30 15 * * *", content)
+
+    def test_workflow_concurrency_control(self):
+        """Verify concurrency group exists to prevent overlapping runner jobs."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("concurrency:", content)
+        self.assertIn("noorpost-production", content)
+        self.assertIn("cancel-in-progress: false", content)
+
+    def test_workflow_dispatch_inputs(self):
+        """Verify rich workflow_dispatch inputs: content_type, theme, preset, duration, enable_nasheed, dry_run."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", content)
+        self.assertIn("content_type:", content)
+        self.assertIn("hadith_sahih", content)
+        self.assertIn("enable_nasheed:", content)
+        self.assertIn("dry_run:", content)
+        self.assertIn("repurpose_url:", content)
+        self.assertIn("confirm_rights:", content)
+
+    def test_workflow_executes_safe_runner_without_eval(self):
+        """Verify workflow runs scripts/run_workflow.py and completely excludes dangerous eval."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("python scripts/run_workflow.py", content)
+        self.assertNotIn("eval", content)
+        self.assertNotIn("--autopilot-loop", content)
+
+    def test_workflow_state_sync_steps(self):
+        """Verify workflow pulls state before generation and pushes state after generation."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("python main.py --sync-state-down", content)
+        self.assertIn("python main.py --sync-state-up", content)
+
+    def test_workflow_skips_state_push_on_dry_run(self):
+        """Verify the state push step is skipped during dry runs to prevent production corruption."""
+        content = self.workflow_file.read_text(encoding="utf-8")
+        self.assertIn("github.event.inputs.dry_run != 'true'", content)
+
+
+class TestPersistentStateSync(unittest.TestCase):
+    """Test StateSyncManager for ephemeral GitHub Actions runners."""
+
+    def test_state_folder_isolated_from_make_watcher(self):
+        """
+        Verify state file is stored in /NoorPost_State, completely isolated from
+        the live Make.com watched folder (/NoorPost/*.mp4).
+        """
+        self.assertEqual(DROPBOX_STATE_FOLDER, "/NoorPost_State")
+        self.assertTrue(DROPBOX_STATE_FILE.startswith("/NoorPost_State/"))
+        self.assertFalse(DROPBOX_STATE_FILE.startswith("/NoorPost/"))
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_pull_state_with_mocked_dropbox(self, mock_get_client):
+        """Verify pull_state downloads and merges state from Dropbox."""
+        mock_dbx = MagicMock()
+        mock_resp = MagicMock()
+        state_payload = {
+            "version": "1.0",
+            "last_sync": "2026-10-22T10:00:00Z",
+            "published_content_ids": ["test_dua_99"],
+            "published_clips": ["clip_99"],
+            "publications": []
+        }
+        mock_resp.content = json.dumps(state_payload).encode("utf-8")
+        mock_dbx.files_download.return_value = (None, mock_resp)
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        data = manager.pull_state()
+
+        self.assertIn("test_dua_99", data.get("published_content_ids", []))
+        mock_dbx.files_download.assert_called_once_with(DROPBOX_STATE_FILE)
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_push_state_with_mocked_dropbox(self, mock_get_client):
+        """Verify push_state compiles SQLite state and uploads to Dropbox."""
+        mock_dbx = MagicMock()
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        success = manager.push_state()
+
+        self.assertTrue(success)
+        mock_dbx.files_upload.assert_called_once()
+        call_args = mock_dbx.files_upload.call_args
+        self.assertEqual(call_args[0][1], DROPBOX_STATE_FILE)
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_offline_fallback_when_dropbox_unconfigured(self, mock_get_client):
+        """Verify state manager falls back gracefully without Dropbox client."""
+        mock_get_client.return_value = None
+
+        manager = StateSyncManager()
+        pulled = manager.pull_state()
+        self.assertIsNotNone(pulled)
+        pushed = manager.push_state()
+        self.assertFalse(pushed)  # Returns False safely without raising
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_push_state_skipped_on_dry_run(self, mock_get_client):
+        """Verify push_state skips Dropbox upload completely when dry_run is True."""
+        mock_dbx = MagicMock()
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        success = manager.push_state(is_dry_run=True)
+
+        self.assertTrue(success)
+        mock_dbx.files_upload.assert_not_called()
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_pull_state_idempotency_does_not_multiply_counts(self, mock_get_client):
+        """Verify calling pull_state repeatedly does NOT repeatedly increment times_used."""
+        from database import _get_connection, init_db
+        init_db()
+
+        # Seed a test item in duas_meta
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR IGNORE INTO duas_meta (
+                    content_hash, content_uid, dua_index, dua_type, arabic, transliteration,
+                    translation, source, times_used, is_verified, created_at
+                ) VALUES ('hash_idem_test', 'uid_idem_test', 0, 'Dua', 'test', 'test', 'test', 'source', 1, 1, '2026-10-25')
+            """)
+            conn.commit()
+
+        mock_dbx = MagicMock()
+        mock_resp = MagicMock()
+        state_payload = {
+            "version": "2.0",
+            "last_sync": "2026-10-25T10:00:00Z",
+            "published_content": [
+                {
+                    "content_hash": "hash_idem_test",
+                    "content_uid": "uid_idem_test",
+                    "times_used": 1,
+                    "last_used_at": "2026-10-25T10:00:00Z"
+                }
+            ],
+            "published_content_ids": ["uid_idem_test"],
+            "publications": []
+        }
+        mock_resp.content = json.dumps(state_payload).encode("utf-8")
+        mock_dbx.files_download.return_value = (None, mock_resp)
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        # Pull once
+        manager.pull_state()
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT times_used FROM duas_meta WHERE content_hash = 'hash_idem_test'")
+            count_after_first = cursor.fetchone()[0]
+
+        # Pull second time
+        manager.pull_state()
+        with _get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT times_used FROM duas_meta WHERE content_hash = 'hash_idem_test'")
+            count_after_second = cursor.fetchone()[0]
+
+        self.assertEqual(count_after_first, count_after_second, "Repeated pull_state must be idempotent!")
+
+    @patch("state_sync.StateSyncManager._get_dbx_client")
+    def test_pull_state_fails_closed_on_network_or_auth_error(self, mock_get_client):
+        """Verify pull_state fails closed (raises RuntimeError) when Dropbox fails with a non-404 error in production."""
+        mock_dbx = MagicMock()
+        mock_dbx.files_download.side_effect = ConnectionResetError("Connection reset by peer")
+        mock_get_client.return_value = mock_dbx
+
+        manager = StateSyncManager()
+        with self.assertRaises(RuntimeError) as ctx:
+            manager.pull_state(fail_closed=True)
+        self.assertIn("Failing closed", str(ctx.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

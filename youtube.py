@@ -1,109 +1,126 @@
 """
-youtube.py — YouTube Shorts uploader via YouTube Data API v3
-Handles OAuth authentication + video upload
+youtube.py — YouTube Shorts uploader via YouTube Data API v3 for NoorPost Ultimate
+Handles OAuth authentication, video uploads, and error reporting.
+Genuinely optional: cleanly skips when unconfigured without crashing the pipeline.
 """
 
 import os
 import pickle
+import time
+from pathlib import Path
+from typing import Dict, Any, Optional
+
 import config
 from logger import log
 
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from googleapiclient.errors import HttpError
-
-
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-
-
-# ─────────────────────────────────────────────
-# AUTHENTICATION
-# ─────────────────────────────────────────────
 
 def get_youtube_client():
     """
     Get authenticated YouTube API client.
-    - First run: opens browser for OAuth login → saves token
-    - Later runs: loads saved token automatically
-    - Auto-refreshes expired tokens
+    - Loads saved token if available.
+    - Refreshes expired token automatically.
+    - If unconfigured, returns None gracefully.
     """
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
     creds = None
+    token_path = Path(config.YT_TOKEN_FILE)
+    creds_path = Path(config.YT_CREDENTIALS_FILE)
 
-    # Load saved token
-    if os.path.exists(config.YT_TOKEN_FILE):
-        with open(config.YT_TOKEN_FILE, "rb") as f:
-            creds = pickle.load(f)
+    # 1. Load saved token
+    if token_path.exists():
+        try:
+            with open(token_path, "rb") as f:
+                creds = pickle.load(f)
+        except Exception as e:
+            log(f"⚠️  Could not read YouTube token file: {e}", level="WARNING")
 
-    # Refresh if expired
+    # 2. Refresh if expired
     if creds and creds.expired and creds.refresh_token:
-        log("🔄 Refreshing YouTube token...")
-        creds.refresh(Request())
-        with open(config.YT_TOKEN_FILE, "wb") as f:
-            pickle.dump(creds, f)
-        log("✅ YouTube token refreshed.")
+        try:
+            log("🔄 Refreshing expired YouTube token...")
+            creds.refresh(Request())
+            with open(token_path, "wb") as f:
+                pickle.dump(creds, f)
+            log("✅ YouTube token refreshed.")
+        except Exception as e:
+            log(f"⚠️  Could not refresh YouTube token: {e}", level="WARNING")
+            creds = None
 
-    # First-time auth
-    elif not creds or not creds.valid:
-        if not os.path.exists(config.YT_CREDENTIALS_FILE):
-            log(f"❌ Missing {config.YT_CREDENTIALS_FILE} — see SETUP_GUIDE.md Section 3", level="ERROR")
+    # 3. First-time authentication (interactive browser)
+    if not creds or not creds.valid:
+        if not creds_path.exists():
             return None
-        log("🔐 Opening browser for YouTube authentication (one-time only)...")
-        flow = InstalledAppFlow.from_client_secrets_file(config.YT_CREDENTIALS_FILE, SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open(config.YT_TOKEN_FILE, "wb") as f:
-            pickle.dump(creds, f)
-        log("✅ YouTube token saved.")
+        try:
+            log("🔐 Opening browser for one-time YouTube authentication...")
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open(token_path, "wb") as f:
+                pickle.dump(creds, f)
+            log("✅ YouTube token saved.")
+        except Exception as e:
+            log(f"❌ YouTube authentication failed: {e}", level="ERROR")
+            return None
 
     return build("youtube", "v3", credentials=creds)
 
-
-# ─────────────────────────────────────────────
-# YOUTUBE SHORT UPLOADER
-# ─────────────────────────────────────────────
-
-def upload_short(video_path: str, dua: dict, caption: str) -> bool:
+def upload_short(video_path: str, dua: Dict[str, Any], caption: str) -> Dict[str, Any]:
     """
     Upload video as a YouTube Short.
-    YouTube auto-classifies as Short if:
-    - Video is vertical (1080x1920)
-    - Duration is under 60 seconds
-    - Title contains #Shorts
+    Returns:
+        {"success": bool, "platform": "youtube", "url": str, "remote_id": str, "error": str}
     """
-    log("▶️  Uploading to YouTube Shorts...")
+    if config.SKIP_YOUTUBE:
+        log("⏭️  YouTube skipped (SKIP_YOUTUBE=True)")
+        return {"success": False, "status": "skipped", "error": "SKIP_YOUTUBE"}
+
+    if not config.is_youtube_configured():
+        log("⏭️  YouTube credentials not configured. Skipping YouTube upload.")
+        return {"success": False, "status": "skipped", "error": "NOT_CONFIGURED"}
+
+    try:
+        from googleapiclient.http import MediaFileUpload
+        from googleapiclient.errors import HttpError
+    except ImportError:
+        log("⚠️  Google API client libraries not installed. Skipping YouTube.", level="WARNING")
+        return {"success": False, "status": "skipped", "error": "DEPENDENCY_MISSING"}
 
     youtube = get_youtube_client()
     if not youtube:
-        return False
+        return {"success": False, "status": "failed", "error": "AUTH_FAILED"}
 
-    # Build title (max 100 chars)
-    title = f"{dua['type']} | {dua['source']} #Shorts #Islam #Dua"[:100]
+    dua_type = dua.get("type", dua.get("dua_type", "Authentic Dua"))
+    source = dua.get("source", "Quran/Hadith")
+    title = f"{dua_type} | {source} #Shorts #Islam #Dua"[:100]
 
     body = {
         "snippet": {
-            "title":       title,
+            "title": title,
             "description": caption,
             "tags": [
                 "Islam", "Quran", "Dua", "Sunnah", "Muslim",
                 "Hadith", "Shorts", "DailyDua", "Islamic", "Allah",
                 "Dhikr", "Alhamdulillah", "SubhanAllah", "Iman", "Faith"
             ],
-            "categoryId":  "22",   # People & Blogs
+            "categoryId": "22",  # People & Blogs
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus":           "public",
+            "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
         },
     }
 
     try:
+        log("📤 Uploading video to YouTube Shorts...")
         media = MediaFileUpload(
             video_path,
             mimetype="video/mp4",
             resumable=True,
-            chunksize=5 * 1024 * 1024,   # 5MB chunks
+            chunksize=5 * 1024 * 1024,
         )
 
         request = youtube.videos().insert(
@@ -113,20 +130,26 @@ def upload_short(video_path: str, dua: dict, caption: str) -> bool:
         )
 
         response = None
-        log("📤 Uploading (this may take a minute)...")
         while response is None:
             status, response = request.next_chunk()
             if status:
                 pct = int(status.progress() * 100)
-                log(f"   Upload progress: {pct}%")
+                log(f"   YouTube upload progress: {pct}%")
 
-        video_id = response["id"]
-        log(f"✅ YouTube Short uploaded! https://youtube.com/shorts/{video_id}")
-        return True
+        video_id = response.get("id", "")
+        yt_url = f"https://youtube.com/shorts/{video_id}"
+        log(f"✅ YouTube Short uploaded: {yt_url}")
+        return {
+            "success": True,
+            "platform": "youtube",
+            "url": yt_url,
+            "remote_id": video_id,
+            "error": None
+        }
 
     except HttpError as e:
         log(f"❌ YouTube HTTP error: {e}", level="ERROR")
-        return False
+        return {"success": False, "platform": "youtube", "url": None, "remote_id": None, "error": str(e)}
     except Exception as e:
         log(f"❌ YouTube error: {e}", level="ERROR")
-        return False
+        return {"success": False, "platform": "youtube", "url": None, "remote_id": None, "error": str(e)}
