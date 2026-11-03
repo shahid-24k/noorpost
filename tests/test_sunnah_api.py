@@ -155,5 +155,48 @@ class TestSahihVerificationPolicy(unittest.TestCase):
         self.assertEqual(record["verification_status"], "verified_sahih")
 
 
+
+    def test_api_access_request_url_constant(self):
+        """Verify API access request tracking issue constant points to official issue 4291."""
+        client = SunnahApiClient()
+        self.assertEqual(client.API_ACCESS_REQUEST_ISSUE, "https://github.com/sunnah-com/api/issues/4291")
+
+    @patch("requests.get")
+    def test_caching_and_hit(self, mock_get):
+        """Verify cached results are returned without hitting requests.get."""
+        client = SunnahApiClient(api_key="valid_key")
+        client._cache = {}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": [{"name": "muslim"}]}
+        mock_get.return_value = mock_resp
+
+        # First request makes network call and caches
+        result1 = client.get_collections()
+        self.assertEqual(len(result1), 1)
+        self.assertEqual(mock_get.call_count, 1)
+
+        # Second request must hit cache without additional network calls
+        result2 = client.get_collections()
+        self.assertEqual(len(result2), 1)
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("sunnah_api.time.sleep")
+    @patch("requests.get")
+    def test_rate_limit_throttle_pacing(self, mock_get, mock_sleep):
+        """Verify client pauses if consecutive requests are spaced < 1.0 second apart."""
+        client = SunnahApiClient(api_key="valid_key")
+        client._cache = {}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": {"hadith": []}}
+        mock_get.return_value = mock_resp
+
+        import time
+        client._last_request_time = time.time()  # Just happened
+        client._make_request("collections")
+        mock_sleep.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()

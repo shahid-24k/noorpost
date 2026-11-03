@@ -271,13 +271,13 @@ class TestMockedPipelineProcessing(unittest.TestCase):
 
     @patch("autopilot.run_repurpose_pipeline")
     def test_youtube_requires_rights_confirmation(self, mock_pipeline):
-        """YouTube sources without --confirm-rights are rejected."""
+        """YouTube sources without independent authorization are rejected."""
         sync_queue_to_db(["https://www.youtube.com/watch?v=NOAUTH"])
         jobs = get_pending_jobs()
 
         result = process_single_job(jobs[0], confirm_rights=False)
         self.assertEqual(result["status"], "failed")
-        self.assertIn("requires --confirm-rights", result["error"])
+        self.assertIn("independently confirmed rights", result["error"])
 
         updated = list_all_jobs()
         self.assertEqual(updated[0]["status"], "FAILED")
@@ -287,22 +287,71 @@ class TestMockedPipelineProcessing(unittest.TestCase):
 
     @patch("autopilot.run_repurpose_pipeline")
     def test_youtube_with_rights_proceeds(self, mock_pipeline):
-        """YouTube sources with --confirm-rights are processed."""
+        """YouTube sources with independent rights confirmation are processed."""
         mock_pipeline.return_value = {
             "status": "completed",
             "source_id": "yt_abc",
             "clips": [{"clip_id": "c01"}]
         }
 
-        sync_queue_to_db(["https://www.youtube.com/watch?v=AUTHED"])
+        sync_queue_to_db(["https://www.youtube.com/watch?v=AUTHED | Verified Channel | YES"])
         jobs = get_pending_jobs()
+        authed_job = next(j for j in jobs if "AUTHED" in j["source_entry"])
 
-        result = process_single_job(jobs[0], confirm_rights=True)
+        result = process_single_job(authed_job, confirm_rights=True)
         self.assertEqual(result["status"], "completed")
 
         # Verify confirm_rights was passed correctly
         call_kwargs = mock_pipeline.call_args[1]
         self.assertTrue(call_kwargs["confirm_rights"])
+
+    @patch("autopilot.run_repurpose_pipeline")
+    def test_confirm_rights_flag_cannot_override_missing_rights(self, mock_pipeline):
+        """A global confirm_rights=True flag CANNOT force-authorize a YouTube source lacking independent rights."""
+        sync_queue_to_db(["https://www.youtube.com/watch?v=UNAUTH_FLAG_TEST"])
+        jobs = get_pending_jobs()
+        unauthed_job = next(j for j in jobs if "UNAUTH_FLAG_TEST" in j["source_entry"])
+
+        result = process_single_job(unauthed_job, confirm_rights=True)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("independently confirmed rights", result["error"])
+        mock_pipeline.assert_not_called()
+
+    @patch("autopilot.run_repurpose_pipeline")
+    def test_confirm_rights_flag_cannot_override_explicit_negative_rights(self, mock_pipeline):
+        """A global confirm_rights=True flag CANNOT override an explicit negative rights confirmation (NO)."""
+        sync_queue_to_db(["https://www.youtube.com/watch?v=NEGATIVE_TEST | Channel X | NO"])
+        jobs = get_pending_jobs()
+        neg_job = next(j for j in jobs if "NEGATIVE_TEST" in j["source_entry"])
+
+        result = process_single_job(neg_job, confirm_rights=True)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("independently confirmed rights", result["error"])
+        mock_pipeline.assert_not_called()
+
+    def test_get_authorized_pending_jobs_filters_unauthorized(self):
+        """get_authorized_pending_jobs() strictly returns only authorized pending entries."""
+        from autopilot import get_authorized_pending_jobs
+        with _get_connection() as conn:
+            conn.execute("DELETE FROM autopilot_queue")
+            conn.commit()
+
+        entries = [
+            "https://www.youtube.com/watch?v=AUTH_A | Authorized Channel | YES",
+            "https://www.youtube.com/watch?v=UNAUTH_B | Unknown Channel",
+            "https://www.youtube.com/watch?v=DENIED_C | Denied Channel | NO",
+            "D:\lectures\local_lecture.mp4"
+        ]
+        sync_queue_to_db(entries)
+
+        authorized = get_authorized_pending_jobs()
+        auth_entries = [j["source_entry"] for j in authorized]
+
+        self.assertEqual(len(authorized), 2)
+        self.assertTrue(any("AUTH_A" in e for e in auth_entries))
+        self.assertTrue(any("local_lecture.mp4" in e for e in auth_entries))
+        self.assertFalse(any("UNAUTH_B" in e for e in auth_entries))
+        self.assertFalse(any("DENIED_C" in e for e in auth_entries))
 
     @patch("autopilot.run_repurpose_pipeline")
     def test_pipeline_exception_marks_failed(self, mock_pipeline):
