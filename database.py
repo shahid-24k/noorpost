@@ -195,6 +195,18 @@ def init_db():
             )
         """)
 
+        # 8. Nasheed Usage Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS nasheed_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                track_id TEXT UNIQUE NOT NULL,
+                track_title TEXT,
+                times_used INTEGER DEFAULT 1,
+                last_used_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
     log("🗄️  Database verified and initialized successfully.")
 
@@ -740,3 +752,28 @@ def is_duplicate_clip(source_id: str, start_sec: float, end_sec: float) -> bool:
             LIMIT 1
         """, (source_id, start_sec, end_sec))
         return cursor.fetchone() is not None
+
+def record_nasheed_usage(track_id: str, track_title: str = "") -> None:
+    """Record or increment usage of a nasheed track."""
+    init_db()
+    now_iso = datetime.now().isoformat()
+    with _get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO nasheed_usage (track_id, track_title, times_used, last_used_at, created_at)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(track_id) DO UPDATE SET
+                times_used = nasheed_usage.times_used + 1,
+                last_used_at = excluded.last_used_at,
+                track_title = COALESCE(excluded.track_title, nasheed_usage.track_title)
+        """, (track_id, track_title or track_id, now_iso, now_iso))
+        conn.commit()
+
+def get_nasheed_usage() -> List[Dict[str, Any]]:
+    """Retrieve all nasheed usage records."""
+    init_db()
+    with _get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT track_id, track_title, times_used, last_used_at, created_at FROM nasheed_usage")
+        return [dict(r) for r in cursor.fetchall()]
+
