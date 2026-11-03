@@ -252,7 +252,7 @@ def main(argv=None):
 
     if args.sync_state_down:
         from state_sync import state_manager
-        state_manager.pull_state()
+        state_manager.pull_state(fail_closed=not args.preview)
         return
 
     if args.sync_state_up:
