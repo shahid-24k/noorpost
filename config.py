@@ -37,6 +37,9 @@ SKIP_YOUTUBE = os.getenv("SKIP_YOUTUBE", "True").strip().lower() in ("true", "1"
 # Official Sunnah.com API Access
 SUNNAH_API_KEY = os.getenv("SUNNAH_API_KEY", "").strip()
 
+# Official UmmahAPI Access (Quran & Sahih Bukhari/Muslim)
+UMMAH_API_KEY = os.getenv("UMMAH_API_KEY", "").strip()
+
 # =============================================================================
 # 3. AUTOMATION & SCHEDULER
 # =============================================================================

@@ -361,7 +361,8 @@ def get_next_authentic_content(
     category: Optional[str] = None,
     categories_list: Optional[List[str]] = None,
     exclude_recent_hours: int = 24,
-    require_approved: bool = True
+    require_approved: bool = True,
+    strict_sahih_only: bool = True
 ) -> Dict[str, Any]:
     """
     Intelligent selection of verified Islamic content:
@@ -369,6 +370,9 @@ def get_next_authentic_content(
     - Strictly prevents duplicate selection by tracking times_used and last_used_at.
     - Excludes items with review_status != 'approved' when require_approved=True.
     - Avoids recently published content within `exclude_recent_hours`.
+    - Strict Islamic Content Policy (strict_sahih_only=True): Exclusively allows
+      Quran, Sahih al-Bukhari, and Sahih Muslim. Strictly excludes Abu Dawud, Tirmidhi,
+      Ibn Majah, etc.
     - Recovers gracefully if all items in a category have been used.
     - Atomically updates times_used and last_used_at.
     """
@@ -395,6 +399,20 @@ def get_next_authentic_content(
 
         if require_approved:
             conditions.append("(review_status = 'approved' OR review_status IS NULL)")
+
+        # Strict Islamic Content Policy filter: ONLY Quran, Bukhari, and Muslim
+        if strict_sahih_only:
+            conditions.append("""(
+                (category = 'quranic_verses' OR source LIKE '%Qur''an%' OR source LIKE '%Quran%' OR source LIKE '%Bukhari%' OR source LIKE '%Muslim%')
+                AND source NOT LIKE '%Abu Dawud%'
+                AND source NOT LIKE '%Tirmidhi%'
+                AND source NOT LIKE '%Ibn Majah%'
+                AND source NOT LIKE '%Nasa%'
+                AND source NOT LIKE '%Bayhaqi%'
+                AND source NOT LIKE '%Hakim%'
+                AND source NOT LIKE '%Ibn Hibban%'
+                AND source NOT LIKE '%Awsat%'
+            )""")
 
         # Category condition
         if target_categories:
@@ -424,14 +442,23 @@ def get_next_authentic_content(
             cursor.execute(f"SELECT * FROM duas_meta {where_clause} {order_clause}", params)
             row = cursor.fetchone()
 
-        # 3. If category has no items at all, fallback to any approved verified content
+        # 3. If category has no items at all, fallback to any approved verified content meeting policy
         if not row:
             log(f"⚠️  No approved items in {target_categories}; falling back to general approved pool.", level="WARNING")
-            cursor.execute(f"""
-                SELECT * FROM duas_meta
-                WHERE is_verified = 1 AND (review_status = 'approved' OR review_status IS NULL)
-                {order_clause}
-            """)
+            fallback_cond = "WHERE is_verified = 1 AND (review_status = 'approved' OR review_status IS NULL)"
+            if strict_sahih_only:
+                fallback_cond += """ AND (
+                    (category = 'quranic_verses' OR source LIKE '%Qur''an%' OR source LIKE '%Quran%' OR source LIKE '%Bukhari%' OR source LIKE '%Muslim%')
+                    AND source NOT LIKE '%Abu Dawud%'
+                    AND source NOT LIKE '%Tirmidhi%'
+                    AND source NOT LIKE '%Ibn Majah%'
+                    AND source NOT LIKE '%Nasa%'
+                    AND source NOT LIKE '%Bayhaqi%'
+                    AND source NOT LIKE '%Hakim%'
+                    AND source NOT LIKE '%Ibn Hibban%'
+                    AND source NOT LIKE '%Awsat%'
+                )"""
+            cursor.execute(f"SELECT * FROM duas_meta {fallback_cond} {order_clause}")
             row = cursor.fetchone()
 
         if not row:

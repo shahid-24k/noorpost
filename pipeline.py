@@ -31,6 +31,7 @@ from caption_engine import generate_caption
 from ai_adapter import ai_engine
 from video_generator import generate_video
 from sunnah_api import sunnah_client
+from ummah_api import ummah_api
 from nasheed_engine import nasheed_engine
 
 from instagram import post_reel
@@ -44,16 +45,61 @@ def select_content(
     category: Optional[str] = None,
     categories_list: Optional[List[str]] = None,
     force_sahih_hadith: bool = False,
+    prefer_ummah: bool = True,
 ) -> Dict[str, Any]:
     """
     Select verified authentic content with strict duplicate prevention.
-    Integrates Sunnah.com API for live Sahih Hadith when requested/configured,
+    Integrates UmmahAPI as the primary Quran and Sahih Hadith (Bukhari & Muslim) provider,
     with safe canonical local database fallback.
+    Strict Islamic Content Policy enforced: ONLY Quran, Bukhari, and Muslim permitted.
     """
     init_db()
     sync_duas(AUTHENTIC_CONTENT)
 
-    # If Sahih Hadith explicitly requested or category is prophetic_hadith:
+    # 1. Primary Provider: UmmahAPI (Quran & Sahih Bukhari / Muslim)
+    if prefer_ummah:
+        try:
+            ummah_item = None
+            if force_sahih_hadith or category == "prophetic_hadith":
+                col = random.choice(["bukhari", "muslim"])
+                log(f"🔍 [UmmahAPI] Querying verified Sahih Hadith ({col})...")
+                raw = ummah_api.get_random_hadith(col)
+                if raw:
+                    ummah_item = ummah_api.format_hadith_record(raw["collection"], raw["hadith_number"])
+            elif category == "quranic_verses":
+                log("🔍 [UmmahAPI] Querying verified Qur'an verse...")
+                raw = ummah_api.get_random_ayah()
+                if raw:
+                    ummah_item = ummah_api.format_quran_record(raw["surah_number"], raw["ayah_number"])
+            elif category is None:
+                choice = random.choice(["quran", "bukhari", "muslim"])
+                if choice == "quran":
+                    log("🔍 [UmmahAPI] Rotating: Querying verified Qur'an verse...")
+                    raw = ummah_api.get_random_ayah()
+                    if raw:
+                        ummah_item = ummah_api.format_quran_record(raw["surah_number"], raw["ayah_number"])
+                else:
+                    log(f"🔍 [UmmahAPI] Rotating: Querying verified Sahih Hadith ({choice})...")
+                    raw = ummah_api.get_random_hadith(choice)
+                    if raw:
+                        ummah_item = ummah_api.format_hadith_record(raw["collection"], raw["hadith_number"])
+
+            if ummah_item:
+                ok, reason = ummah_api.verify_content_item(ummah_item)
+                if ok:
+                    row_id = upsert_content_item(ummah_item)
+                    ummah_item["id"] = row_id
+                    if not is_recent_duplicate(row_id, hours=24):
+                        log(f"📖 Selected Verified Content (UmmahAPI): [{ummah_item['source']}]")
+                        return ummah_item
+                    else:
+                        log(f"ℹ️  UmmahAPI item {ummah_item['source']} was recently published. Falling back to pool.", level="INFO")
+                else:
+                    log(f"⚠️  UmmahAPI verification rejected candidate: {reason}", level="WARNING")
+        except Exception as e:
+            log(f"⚠️  UmmahAPI query failed or offline ({e}); proceeding to secondary/database fallback.", level="WARNING")
+
+    # 2. Secondary Provider for Hadith: Sunnah.com (if UmmahAPI did not return and hadith was requested)
     if force_sahih_hadith or category == "prophetic_hadith":
         if sunnah_client.is_configured():
             try:
@@ -64,26 +110,22 @@ def select_content(
                 if raw_hadith:
                     hadith_item = sunnah_client.format_hadith_record(raw_hadith)
                     if hadith_item:
-                        # Upsert into database to ensure local integer ID and content_hash exist
                         row_id = upsert_content_item(hadith_item)
-                        external_id = hadith_item["id"]
-                        hadith_item["external_id"] = external_id
                         hadith_item["id"] = row_id
-
                         if not is_recent_duplicate(row_id, hours=24):
                             log(f"📖 Selected Verified Sahih Hadith (Sunnah.com): [{hadith_item['source']}]")
                             return hadith_item
-                        else:
-                            log(f"ℹ️  Hadith {hadith_item['source']} was recently published. Falling back to rotation.", level="INFO")
             except Exception as e:
                 log(f"⚠️  Sunnah.com API query failed ({e}); falling back to local canonical database.", level="WARNING")
         category = "prophetic_hadith"
 
+    # 3. Canonical Local Database Selection with Strict Sahih Filter
     item = get_next_authentic_content(
         category=category,
         categories_list=categories_list,
         exclude_recent_hours=24,
-        require_approved=True
+        require_approved=True,
+        strict_sahih_only=True
     )
     content_id = item["id"]
 
@@ -94,7 +136,8 @@ def select_content(
             category=category,
             categories_list=categories_list,
             exclude_recent_hours=48,
-            require_approved=True
+            require_approved=True,
+            strict_sahih_only=True
         )
 
     cat_name = item.get("category", "daily_duas")
@@ -190,13 +233,6 @@ def generate_media(
         preset=preset_name,
         category=cat_key,
     )
-
-    if audio_info and audio_info.get("track_id"):
-        try:
-            from database import record_nasheed_usage
-            record_nasheed_usage(audio_info["track_id"], audio_info.get("track_title", ""))
-        except Exception as e:
-            log(f"Nasheed usage tracking notice: {e}", level="WARNING")
 
     return {
         "video_id": video_id,
