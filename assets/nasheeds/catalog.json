@@ -1,167 +1,70 @@
 {
-  "version": "2.0",
-  "catalog_name": "Halal Tunes Official Vocal Nasheed Catalog",
-  "source_platform": "Halal Tunes (https://halaltunes.carrd.co/)",
-  "official_drive_folder": "https://drive.google.com/drive/folders/1h-jxBZB-2Hhv3Rlfz4xoVKvw2t2kU6zC?usp=share_link",
-  "creator_contacts": [
-    "halal.tunes@my.com",
-    "support@lightslayer.co.uk"
-  ],
-  "licensing_policy": "Strict Copyright & Islamic Integrity: All tracks are strictly vocal-only. Permission status is verified per track. Until explicit written authorization covering automated Instagram Reels and API publishing is confirmed by the creator, tracks are held in NEEDS_LICENSE_REVIEW and excluded from automated publication. Quranic recitation background music remains permanently disabled.",
+  "version": "3.0",
+  "catalog_name": "NoorPost Personal Audio Catalog",
+  "licensing_policy": "Owner-provided personal audio files. No third-party licensing required. Quran recitation background audio permanently disabled.",
+  "mood_selection_policy": "Audio is automatically selected based on Reel content mood. Happy/uplifting content uses 'my own 1.mp3'. Sad/emotional/reflective content uses 'Fall my own 2.mp3'. Quranic recitations are always silent.",
   "tracks": [
     {
-      "id": "halaltunes_noor",
-      "title": "Noor (Divine Light) — Vocals Only",
-      "creator": "Halal Tunes",
-      "channel": "@HalalTunesYT",
-      "google_drive_id": "11nYEvnq6piZopLYajUK-Ay8zrsagugFn",
-      "drive_url": "https://drive.google.com/file/d/11nYEvnq6piZopLYajUK-Ay8zrsagugFn/view?usp=sharing",
-      "local_path": "assets/audio/nasheeds/halaltunes_noor.mp3",
-      "file_size_bytes": 3990814,
-      "duration": 249.4,
-      "format": "MP3 44.1kHz Stereo",
-      "permission_evidence": "Encountered on official Carrd site as 'Copyright Free Halal Vocal Nasheeds'. Written permission request pending for automated Instagram Reels distribution.",
-      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
-      "required_attribution": "Background Nasheed: 'Noor' by Halal Tunes (https://halaltunes.carrd.co/)",
-      "language": "Arabic / Vocal Harmonies",
+      "id": "personal_happy_01",
+      "title": "My Own 1 — Happy & Normal",
+      "creator": "Owner",
+      "local_path": "assets/audio/nasheeds/my own 1.mp3",
+      "file_size_bytes": 1099953,
+      "duration": 15.14,
+      "format": "MP3",
+      "mood": "happy",
+      "permission_evidence": "Owner-provided personal audio file.",
+      "external_use_permission": "OWNER_APPROVED",
+      "required_attribution": "",
+      "language": "Instrumental / Vocal",
       "topic_tags": [
         "daily_duas",
-        "friday_reminders",
+        "morning_adhkar",
+        "gratitude_patience",
+        "remembrance_dhikr",
         "prophetic_hadith",
+        "short_reminders",
         "ramadan",
-        "quranic_verses",
+        "friday_reminders",
+        "eid_content",
         "general_education"
       ],
       "approved_highlights": [
         {
-          "start": 15.0,
-          "end": 45.0,
-          "label": "Main Vocal Refrain",
-          "description": "Lyrical melodic acapella refrain suitable for 15-30s Reels."
+          "start": 0.0,
+          "end": 15.0,
+          "label": "Full Track",
+          "description": "Complete happy audio bed for normal Reels."
         }
       ],
-      "approval_status": "NEEDS_LICENSE_REVIEW"
+      "approval_status": "APPROVED"
     },
     {
-      "id": "halaltunes_alhamdulillah",
-      "title": "Alhamdulillah (All Praise is Due to Allah) — Vocals Only",
-      "creator": "Halal Tunes",
-      "channel": "@HalalTunesYT",
-      "google_drive_id": "196L-nR8giw8rICJqx6Sd75UfkVSzf9G9",
-      "drive_url": "https://drive.google.com/file/d/196L-nR8giw8rICJqx6Sd75UfkVSzf9G9/view?usp=sharing",
-      "local_path": "assets/audio/nasheeds/halaltunes_alhamdulillah.mp3",
-      "file_size_bytes": 2138419,
-      "duration": 133.6,
-      "format": "MP3 44.1kHz Stereo",
-      "permission_evidence": "Encountered on official Carrd site as 'Copyright Free Halal Vocal Nasheeds'. Written permission request pending for automated Instagram Reels distribution.",
-      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
-      "required_attribution": "Background Nasheed: 'Alhamdulillah' by Halal Tunes (https://halaltunes.carrd.co/)",
-      "language": "Arabic / Acapella Bed",
+      "id": "personal_emotional_02",
+      "title": "Fall My Own 2 — Sad & Emotional",
+      "creator": "Owner",
+      "local_path": "assets/audio/nasheeds/Fall my own 2.mp3",
+      "file_size_bytes": 2421496,
+      "duration": 51.67,
+      "format": "MP3",
+      "mood": "emotional",
+      "permission_evidence": "Owner-provided personal audio file.",
+      "external_use_permission": "OWNER_APPROVED",
+      "required_attribution": "",
+      "language": "Instrumental / Vocal",
       "topic_tags": [
-        "gratitude_patience",
-        "morning_adhkar",
-        "daily_duas",
-        "eid_content"
-      ],
-      "approved_highlights": [
-        {
-          "start": 10.0,
-          "end": 40.0,
-          "label": "Praise Harmony",
-          "description": "Warm, peaceful vocal harmony ideal for gratitude reminders."
-        }
-      ],
-      "approval_status": "NEEDS_LICENSE_REVIEW"
-    },
-    {
-      "id": "halaltunes_gratitude",
-      "title": "Gratitude (Shukr) — Vocals Only",
-      "creator": "Halal Tunes",
-      "channel": "@HalalTunesYT",
-      "google_drive_id": "1p9hPvE2faUBgrAK8qssQ5dqz5KBXoBX3",
-      "drive_url": "https://drive.google.com/file/d/1p9hPvE2faUBgrAK8qssQ5dqz5KBXoBX3/view?usp=sharing",
-      "local_path": "assets/audio/nasheeds/halaltunes_gratitude.mp3",
-      "file_size_bytes": 3806292,
-      "duration": 208.7,
-      "format": "MP3 44.1kHz Stereo",
-      "permission_evidence": "Encountered on official Carrd site as 'Copyright Free Halal Vocal Nasheeds'. Written permission request pending for automated Instagram Reels distribution.",
-      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
-      "required_attribution": "Background Nasheed: 'Gratitude' by Halal Tunes (https://halaltunes.carrd.co/)",
-      "language": "Vocals Only",
-      "topic_tags": [
-        "gratitude_patience",
-        "short_reminders",
-        "daily_duas"
-      ],
-      "approved_highlights": [
-        {
-          "start": 20.0,
-          "end": 50.0,
-          "label": "Gratitude Refrain",
-          "description": "Gentle, uplifting vocal hum for morning reminders."
-        }
-      ],
-      "approval_status": "NEEDS_LICENSE_REVIEW"
-    },
-    {
-      "id": "halaltunes_calm",
-      "title": "Calm & Peace (Sakina) — Vocals Only",
-      "creator": "Halal Tunes",
-      "channel": "@HalalTunesYT",
-      "google_drive_id": "1sDiJeCrQplIq-OJymqPP01bTh7S7kgvd",
-      "drive_url": "https://drive.google.com/file/d/1sDiJeCrQplIq-OJymqPP01bTh7S7kgvd/view?usp=sharing",
-      "local_path": "assets/audio/nasheeds/halaltunes_calm.mp3",
-      "file_size_bytes": 4399720,
-      "duration": 253.2,
-      "format": "MP3 44.1kHz Stereo",
-      "permission_evidence": "Encountered on official Carrd site as 'Copyright Free Halal Vocal Nasheeds'. Written permission request pending for automated Instagram Reels distribution.",
-      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
-      "required_attribution": "Background Nasheed: 'Calm' by Halal Tunes (https://halaltunes.carrd.co/)",
-      "language": "Vocals Only / Low Resonance",
-      "topic_tags": [
-        "reflective_night",
         "forgiveness_repentance",
-        "short_reminders"
+        "evening_adhkar"
       ],
       "approved_highlights": [
         {
-          "start": 15.0,
+          "start": 0.0,
           "end": 45.0,
-          "label": "Contemplative Harmony",
-          "description": "Deep reflective resonance suited for night and repentance supplications."
+          "label": "Emotional Opening",
+          "description": "Reflective, melancholic audio bed for repentance and evening content."
         }
       ],
-      "approval_status": "NEEDS_LICENSE_REVIEW"
-    },
-    {
-      "id": "halaltunes_hopeful",
-      "title": "Hopeful (Raja') — Vocals Only",
-      "creator": "Halal Tunes",
-      "channel": "@HalalTunesYT",
-      "google_drive_id": "1R1uVr5ck_zY5aWFHYu6CsJzj8WvKHvOX",
-      "drive_url": "https://drive.google.com/file/d/1R1uVr5ck_zY5aWFHYu6CsJzj8WvKHvOX/view?usp=sharing",
-      "local_path": "assets/audio/nasheeds/halaltunes_hopeful.mp3",
-      "file_size_bytes": 786739,
-      "duration": 49.2,
-      "format": "MP3 44.1kHz Stereo",
-      "permission_evidence": "Encountered on official Carrd site as 'Copyright Free Halal Vocal Nasheeds'. Written permission request pending for automated Instagram Reels distribution.",
-      "external_use_permission": "UNVERIFIED_PENDING_EXPLICIT_PROOF",
-      "required_attribution": "Background Nasheed: 'Hopeful' by Halal Tunes (https://halaltunes.carrd.co/)",
-      "language": "Vocals Only",
-      "topic_tags": [
-        "daily_duas",
-        "prophetic_hadith",
-        "friday_reminders"
-      ],
-      "approved_highlights": [
-        {
-          "start": 5.0,
-          "end": 35.0,
-          "label": "Uplifting Intro",
-          "description": "Inspiring vocal melody designed for concise motivational reminders."
-        }
-      ],
-      "approval_status": "NEEDS_LICENSE_REVIEW"
+      "approval_status": "APPROVED"
     }
   ]
 }

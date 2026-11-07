@@ -33,6 +33,7 @@ output_videos/
 
 # Runtime Cache & State
 assets/cache/
+!assets/cache/ummah_cache.json
 assets/state/
 
 # Local databases

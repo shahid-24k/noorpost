@@ -83,6 +83,7 @@ jobs:
       DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
       DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
       SUNNAH_API_KEY: ${{ secrets.SUNNAH_API_KEY }}
+      UMMAH_API_KEY: ${{ secrets.UMMAH_API_KEY }}
       TIMEZONE: "Asia/Kolkata"
 
     steps:
