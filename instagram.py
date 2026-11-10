@@ -1,3 +1,25 @@
+
+# ── Local DNS Resilience Fallback ──────────────────────────────────────────
+try:
+    import socket
+    _orig_getaddrinfo = socket.getaddrinfo
+    _DNS_FALLBACK = {
+        'api.dropboxapi.com': '162.125.81.19',
+        'content.dropboxapi.com': '162.125.81.14',
+        'notify.dropboxapi.com': '162.125.81.18',
+        'www.dropbox.com': '162.125.81.1'
+    }
+    def _resilient_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            return _orig_getaddrinfo(host, port, family, type, proto, flags)
+        except Exception:
+            if host in _DNS_FALLBACK:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (_DNS_FALLBACK[host], port))]
+            raise
+    socket.getaddrinfo = _resilient_getaddrinfo
+except Exception:
+    pass
+
 """
 instagram.py — Cloud publishing & Instagram integration for NoorPost Ultimate
 Uploads videos and captions to Dropbox (for Make.com auto-publishing)
