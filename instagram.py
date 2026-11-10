@@ -84,12 +84,12 @@ def upload_to_dropbox(video_path: str, caption: str, max_retries: int = 3) -> Di
             )
             log("✅ Caption file uploaded to Dropbox.")
 
-            # Retrieve or generate shared link
+            # Retrieve or generate shared link (optional fallback for Make.com / metadata)
             shared_url = dropbox_video_path
             try:
                 link = dbx.sharing_create_shared_link_with_settings(dropbox_video_path)
                 shared_url = link.url
-            except dropbox.exceptions.ApiError:
+            except Exception:
                 try:
                     links = dbx.sharing_list_shared_links(path=dropbox_video_path)
                     if links.links:
