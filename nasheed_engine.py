@@ -147,6 +147,37 @@ class NasheedEngine:
         end = min(start + target_duration, track_dur)
         return start, end, "Default Intro Segment"
 
+    def _ensure_track_available(self, track: Dict[str, Any]) -> bool:
+        """
+        Ensure track is available locally. If missing or under 1000 bytes,
+        attempts to download from private Dropbox /NoorPost_Audio folder.
+        """
+        local_path = track.get("local_path")
+        if not local_path:
+            return False
+        p = Path(local_path)
+        if p.exists() and p.stat().st_size >= 1000:
+            return True
+
+        # Attempt to pull from private Dropbox storage
+        remote_path = f"/NoorPost_Audio/{p.name}"
+        try:
+            from instagram import get_dropbox_client
+            dbx = get_dropbox_client()
+            if dbx:
+                log(f"☁️  Downloading personal audio '{p.name}' from Dropbox ({remote_path})...")
+                p.parent.mkdir(parents=True, exist_ok=True)
+                md, resp = dbx.files_download(remote_path)
+                with open(p, "wb") as out_f:
+                    out_f.write(resp.content)
+                if p.exists() and p.stat().st_size >= 1000:
+                    log(f"✅ Downloaded '{p.name}' ({p.stat().st_size} bytes).")
+                    return True
+        except Exception as e:
+            log(f"ℹ️  Could not download '{p.name}' from Dropbox: {e}", level="INFO")
+
+        return False
+
     def prepare_audio_for_video(
         self,
         content_item: Dict[str, Any],
@@ -162,11 +193,10 @@ class NasheedEngine:
         if not track:
             return None
 
-        local_path = track.get("local_path")
-        if not local_path or not Path(local_path).exists() or Path(local_path).stat().st_size < 1000:
-            log(f"ℹ️ Audio file for '{track.get('title')}' is not present locally ({local_path}). Defaulting to silent audio.", level="INFO")
+        if not self._ensure_track_available(track):
+            log(f"ℹ️ Audio file for '{track.get('title')}' is not present locally or on Dropbox. Defaulting to silent audio.", level="INFO")
             return None
-        audio_file = local_path
+        audio_file = track.get("local_path")
 
         start_sec, end_sec, label = self.get_highlight_timing(track, target_duration)
 
