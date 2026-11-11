@@ -83,7 +83,7 @@ class TestVideoGenerator(unittest.TestCase):
     def test_unique_output_filenames_and_creation_with_verified_audio(self):
         dua = DUAS[1]
         with tempfile.TemporaryDirectory() as tmp:
-            audio_path = make_test_audio(Path(tmp) / "owner_track.mp3", 2.0)
+            audio_path = make_test_audio(Path(tmp) / "owner_track.mp3", 3.0)
             audio_info = {
                 "audio_path": str(audio_path), "start_time": 0.0, "end_time": 2.0,
                 "duration": 2.0, "volume": 0.35, "is_quran_recitation": False,
