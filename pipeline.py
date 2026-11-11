@@ -197,17 +197,26 @@ def generate_media(
     script = generate_script(dua, style=script_style)
     log(f"📜 Generated Script: Style='{script['style']}', Hook='{script['hook'][:40]}...'")
 
-    # 3. Audio Selection & Attribution
-    audio_info = None
-    if enable_audio:
-        try:
-            audio_info = nasheed_engine.prepare_audio_for_video(dua, float(video_dur))
-            if audio_info and audio_info.get("attribution"):
-                # Append required track attribution to social caption
-                if audio_info["attribution"] not in caption:
-                    caption += f"\n\n🎵 {audio_info['attribution']}"
-        except Exception as e:
-            log(f"Nasheed preparation skipped: {e}", level="WARNING")
+    # 3. Audio Selection & Attribution — fail closed, never produce silent publishing media.
+    if not enable_audio:
+        raise RuntimeError("Audio is mandatory for NoorPost publishing; silent video generation is disabled.")
+
+    try:
+        audio_info = nasheed_engine.prepare_audio_for_video(dua, float(video_dur))
+    except Exception as exc:
+        log(f"Required audio preparation failed; publishing is blocked: {exc}", level="ERROR")
+        raise
+
+    if not audio_info or not audio_info.get("audio_path"):
+        raise RuntimeError("The audio engine returned no playable track; publishing is blocked.")
+
+    if audio_info.get("is_quran_recitation"):
+        # Record and render long enough for the complete original ayah recitation.
+        video_dur = max(float(video_dur), float(audio_info.get("duration", 0.0)))
+
+    if audio_info.get("attribution"):
+        if audio_info["attribution"] not in caption:
+            caption += f"\n\n🎵 {audio_info['attribution']}"
 
     # 4. Render video
     video_path, preview_path = generate_video(
