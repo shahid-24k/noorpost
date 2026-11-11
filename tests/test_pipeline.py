@@ -23,7 +23,7 @@ def make_test_audio(path: Path) -> Path:
         raise unittest.SkipTest("ffmpeg is required for pipeline audio tests")
     subprocess.run(
         [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-         "-i", "sine=frequency=540:sample_rate=44100", "-t", "2",
+         "-i", "sine=frequency=540:sample_rate=44100", "-t", "3",
          "-c:a", "libmp3lame", "-q:a", "3", str(path)],
         check=True, capture_output=True, timeout=30,
     )
