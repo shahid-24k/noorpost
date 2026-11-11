@@ -61,7 +61,7 @@ class TestAudioPreparation(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.audio_path = make_tone(Path(self.temp.name) / "audible.mp3")
-        self.engine = NasheedEngine(catalog_path=Path(self.temp.name) / "missing-catalog.json")
+        self.engine = NasheedEngine()
 
     def _track(self, mood="happy", path=None):
         return {
