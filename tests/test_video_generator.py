@@ -23,7 +23,7 @@ from duas_db import DUAS
 from database import init_db, record_video, _get_connection
 
 
-def make_test_audio(path: Path, seconds: float = 2.0) -> Path:
+def make_test_audio(path: Path, seconds: float = 3.0) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise unittest.SkipTest("ffmpeg is required for video audio tests")
