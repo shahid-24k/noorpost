@@ -8,7 +8,7 @@ Features:
   - Dynamic font scaling & intelligent multi-scene splitting for long texts
   - Configurable rendering presets (fast, balanced, high_quality)
   - Subtle Ken Burns zoom and smooth fade transitions
-  - Complete audio integration with graceful silent fallbacks
+  - Strict audio validation; silent/corrupt audio blocks publication
 """
 
 import os
@@ -29,9 +29,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Support both MoviePy 1.x and 2.x
 try:
-    from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips
+    from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, concatenate_audioclips
 except ImportError:
-    from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips
+    from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, concatenate_audioclips
 
 import config
 from logger import log
@@ -330,6 +330,9 @@ def generate_video(
     preset_name = preset or config.DEFAULT_PRESET
     preset_cfg = PRESETS.get(preset_name, PRESETS["balanced"])
     video_duration = duration or config.VIDEO_DURATION
+    if audio_info and audio_info.get("is_quran_recitation"):
+        # Keep the entire recitation; never trim an ayah to fit a fixed Reel duration.
+        video_duration = max(float(video_duration), float(audio_info.get("duration", 0.0)))
 
     if enable_animations is None:
         enable_animations = config.ENABLE_ANIMATIONS
@@ -415,43 +418,62 @@ def generate_video(
         fps = preset_cfg.get("fps", 24)
         final_video_clip = final_video_clip.set_fps(fps)
 
-        # 5. Audio Integration
-        if enable_audio:
-            try:
-                audio_file = None
-                start_time = 0.0
-                vol = getattr(config, "AUDIO_VOLUME", 0.35)
+        # 5. Audio Integration — fail closed; never publish silence.
+        if not enable_audio:
+            raise RuntimeError("Audio cannot be disabled for a publishable NoorPost Reel.")
 
-                if audio_info and audio_info.get("audio_path"):
-                    audio_file = audio_info["audio_path"]
-                    start_time = float(audio_info.get("start_time", 0.0))
-                    vol = float(audio_info.get("volume", vol))
-                else:
-                    try:
-                        from nasheed_engine import nasheed_engine
-                        audio_res = nasheed_engine.prepare_audio_for_video(content, video_duration)
-                        if audio_res:
-                            audio_file = audio_res.get("audio_path")
-                            start_time = float(audio_res.get("start_time", 0.0))
-                            vol = float(audio_res.get("volume", vol))
-                    except Exception:
-                        pass
+        if audio_info is None:
+            from nasheed_engine import nasheed_engine
+            audio_info = nasheed_engine.prepare_audio_for_video(content, float(video_duration))
 
-                if not audio_file:
-                    from audio_manager import get_audio_file
-                    audio_file = get_audio_file(duration=video_duration)
+        audio_file = str(audio_info.get("audio_path") or "").strip()
+        if not audio_file:
+            raise RuntimeError("Required audio was not selected. Publishing is blocked.")
 
-                if audio_file and Path(audio_file).exists():
-                    audio = AudioFileClip(audio_file)
-                    if audio.duration > (start_time + video_duration):
-                        audio = audio.subclip(start_time, start_time + video_duration)
-                    else:
-                        audio = audio.subclip(0, min(video_duration, audio.duration))
-                    audio = audio.volumex(vol).audio_fadein(1.0).audio_fadeout(2.0)
-                    final_video_clip = final_video_clip.set_audio(audio)
-                    log(f"🎵 Background audio attached: {Path(audio_file).name} (vol: {vol})")
-            except Exception as e:
-                log(f"⚠️  Audio attachment skipped: {e}", level="WARNING")
+        from audio_manager import validate_audio_file
+        audio_validation = validate_audio_file(audio_file)
+        audio = AudioFileClip(audio_file)
+        if not audio or float(audio.duration or 0.0) <= 0:
+            raise RuntimeError(f"Audio decoder returned no playable duration: {audio_file}")
+
+        is_quran_recitation = bool(audio_info.get("is_quran_recitation"))
+        if is_quran_recitation:
+            # Preserve the original recitation exactly: no background track, loop, or fade.
+            if audio.duration > video_duration:
+                video_duration = float(audio.duration)
+                final_video_clip = final_video_clip.set_duration(video_duration)
+            audio = audio.subclip(0, min(float(audio.duration), float(video_duration)))
+            audio = audio.volumex(1.0)
+            log(
+                f"📖 Original Qur'an recitation attached: "
+                f"{audio_info.get('surah_number')}:{audio_info.get('ayah_number')} "
+                f"({audio.duration:.2f}s)."
+            )
+        else:
+            start_time = max(0.0, float(audio_info.get("start_time", 0.0)))
+            segment_end = min(float(audio.duration), float(audio_info.get("end_time", audio.duration)))
+            if segment_end <= start_time:
+                raise RuntimeError(f"Selected audio segment is invalid: {audio_file}")
+            audio = audio.subclip(start_time, segment_end)
+            if float(audio.duration) <= 0:
+                raise RuntimeError(f"Selected audio segment contains no samples: {audio_file}")
+            if audio.duration < video_duration:
+                loops = int(video_duration // audio.duration) + 1
+                audio = concatenate_audioclips([audio] * loops).subclip(0, video_duration)
+            else:
+                audio = audio.subclip(0, video_duration)
+            volume = float(audio_info.get("volume", getattr(config, "AUDIO_VOLUME", 0.35)))
+            if not 0.0 < volume <= 1.0:
+                raise RuntimeError(f"Background audio volume is invalid: {volume}")
+            fade_in = min(0.8, float(video_duration) / 5.0)
+            fade_out = min(1.2, float(video_duration) / 5.0)
+            audio = audio.volumex(volume).audio_fadein(fade_in).audio_fadeout(fade_out)
+            log(
+                f"🎵 Verified owner audio attached: {Path(audio_file).name} "
+                f"({audio_validation['duration']:.2f}s source, {volume:.2f} volume)."
+            )
+
+        final_video_clip = final_video_clip.set_audio(audio)
 
         # 6. Encode Video
         out_path = str(config.OUTPUT_DIR / f"{base_name}.mp4")
@@ -485,5 +507,13 @@ def generate_video(
     if not out_file.exists() or out_file.stat().st_size < 10000:
         raise RuntimeError(f"Video encoding failed or output file is empty: {out_path}")
 
-    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)")
+    # Final MP4 must contain a decodable, non-silent audio stream.
+    from audio_manager import validate_audio_file
+    final_audio_check = validate_audio_file(out_file, min_bytes=10000)
+    log(
+        f"✅ MP4 audio verified: codec={final_audio_check['codec']}, "
+        f"duration={final_audio_check['duration']:.2f}s, "
+        f"mean={final_audio_check['mean_volume_db']:.1f} dB."
+    )
+    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)
     return out_path, preview_path
