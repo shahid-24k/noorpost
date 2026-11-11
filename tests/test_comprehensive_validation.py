@@ -182,10 +182,11 @@ class TestNoorPostComprehensive20Points(unittest.TestCase):
         self.assertIn("personal_happy_01", track_ids)
         self.assertIn("personal_emotional_02", track_ids)
 
-        # Verify files exist on disk
+        # Audio masters live in private Dropbox; the runner caches them locally on demand.
         for t in tracks:
-            path = Path(t["local_path"])
-            self.assertTrue(path.exists(), f"Track file missing: {path}")
+            self.assertTrue(str(t["local_path"]).endswith(".mp3"))
+            self.assertEqual(t["creator"], "Owner")
+            self.assertEqual(t["external_use_permission"], "OWNER_APPROVED")
 
     # 11. Mood-Based Selection Logic
     def test_11_mood_based_audio_selection(self):
@@ -214,22 +215,30 @@ class TestNoorPostComprehensive20Points(unittest.TestCase):
         fallback_track = engine.select_track_for_content(unclear_item)
         self.assertEqual(fallback_track["id"], "personal_happy_01")
 
-        # Missing / invalid audio file -> returns None (silent)
-        with patch.object(Path, "exists", return_value=False):
-            res = engine.prepare_audio_for_video(unclear_item, target_duration=10.0)
-            self.assertIsNone(res)
+        # Missing / invalid audio is a hard failure, never a silent fallback.
+        with patch.object(engine, "_ensure_track_available",
+                          side_effect=RuntimeError("missing owner audio")):
+            with self.assertRaises(RuntimeError):
+                engine.prepare_audio_for_video(unclear_item, target_duration=10.0)
 
-    # 13. Quran Silence Protection
-    def test_13_quran_silence_protection(self):
+    # 13. Quran Recitation Routing
+    def test_13_quran_recitation_routing(self):
         engine = NasheedEngine()
-
-        # Quran content type MUST result in None track and silent audio
-        quran_item = {"id": "quran_1", "category": "quranic_verses", "type": "Qur'anic Verse"}
-        quran_track = engine.select_track_for_content(quran_item)
-        self.assertIsNone(quran_track)
-
-        prep = engine.prepare_audio_for_video(quran_item, target_duration=15.0)
-        self.assertIsNone(prep)
+        quran_item = {
+            "id": "quran_1", "category": "quranic_verses",
+            "type": "Qur'anic Verse", "source": "Qur'an 2:255",
+        }
+        # Qur'an must never select a personal background track.
+        self.assertIsNone(engine.select_track_for_content(quran_item))
+        expected = {
+            "audio_path": "verified_ayah.mp3", "duration": 12.0,
+            "is_quran_recitation": True, "loop": False, "volume": 1.0,
+        }
+        with patch("nasheed_engine.prepare_quran_recitation", return_value=expected):
+            prep = engine.prepare_audio_for_video(quran_item, target_duration=15.0)
+        self.assertTrue(prep["is_quran_recitation"])
+        self.assertFalse(prep["loop"])
+        self.assertEqual(prep["volume"], 1.0)
 
     # 14. Halal Tunes Isolation
     def test_14_halal_tunes_isolation(self):
@@ -239,17 +248,24 @@ class TestNoorPostComprehensive20Points(unittest.TestCase):
         for track in engine.catalog.get("tracks", []):
             self.assertTrue("my own" in track["title"].lower() or "my own" in track["filename"].lower())
 
-    # 15. Audio Loop & Fade Transitions
+    # 15. Audio Loop and Verified Track Metadata
     def test_15_audio_loop_and_fade_transitions(self):
         engine = NasheedEngine()
         happy_item = {"id": "dua_happy", "category": "daily_duas", "type": "Dua"}
-        prep = engine.prepare_audio_for_video(happy_item, target_duration=15.0)
-        self.assertIsNotNone(prep)
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fixture:
+            fixture.write(b"test-fixture")
+            fixture_path = Path(fixture.name)
+        self.addCleanup(fixture_path.unlink, missing_ok=True)
+        with patch.object(engine, "_ensure_track_available", return_value=fixture_path):
+            with patch("nasheed_engine.validate_audio_file", return_value={
+                "duration": 15.0, "codec": "mp3", "mean_volume_db": -20.0,
+            }):
+                prep = engine.prepare_audio_for_video(happy_item, target_duration=15.0)
         self.assertIn("audio_path", prep)
-        self.assertTrue(Path(prep["audio_path"]).exists())
         self.assertGreater(prep["volume"], 0)
         self.assertEqual(prep["duration"], 15.0)
         self.assertEqual(prep["mood"], "happy")
+        self.assertTrue(prep["loop"])
 
     # 16. Video Generation Output Specs
     def test_16_video_generation_output_specs(self):
