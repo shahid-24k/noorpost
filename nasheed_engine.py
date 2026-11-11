@@ -1,225 +1,193 @@
 """
-nasheed_engine.py — Mood-Based Audio Selection Engine for NoorPost Ultimate
+nasheed_engine.py — approved personal audio selection and exact Qur'an audio routing.
 
-Features:
-- Automatic mood-based audio selection from owner-provided personal tracks.
-- Structured catalog management (assets/nasheeds/catalog.json).
-- Deterministic mood matching: happy/normal content vs. sad/emotional content.
-- Quran Recitation Protection: Automatically disables background audio for Qur'anic content.
-- Speech Clarity Attenuation: Reduces audio volume for spoken khutbahs and lectures.
-- Graceful silent fallback when no suitable audio is available.
+Normal content uses the owner's happy track.
+Reflective content uses the owner's emotional track.
+Qur'an content uses the exact ayah recitation only — never background music.
+Missing or invalid audio is a hard failure; silent publishing is prohibited.
 """
+from __future__ import annotations
 
-import os
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from logger import log
+from audio_manager import validate_audio_file
+from quran_audio import is_quranic_content, prepare_quran_recitation
 
-CATALOG_PATH = Path("assets/nasheeds/catalog.json")
+CATALOG_PATH = config.BASE_DIR / "assets" / "nasheeds" / "catalog.json"
 
-# ── Mood-to-Category Mapping ────────────────────────────────────────────────
-# Categories whose content carries a sad, reflective, or emotional tone.
-EMOTIONAL_CATEGORIES = frozenset({
-    "forgiveness_repentance",
-    "evening_adhkar",
-})
-
-# Categories that must NEVER have background audio (Quran recitation sanctity).
-SILENT_CATEGORIES = frozenset({
-    "quranic_verses",
-})
-
-# Everything else is treated as happy / normal mood.
+EMOTIONAL_CATEGORIES = frozenset({"forgiveness_repentance", "evening_adhkar"})
+SILENT_CATEGORIES = frozenset({"quranic_verses"})  # No *background* audio; exact recitation is attached.
 
 
 class NasheedEngine:
-    """Manages mood-based audio selection from owner-provided personal tracks."""
+    """Selects only approved owner-provided tracks for non-Qur'anic content."""
 
     def __init__(self, catalog_path: Optional[Path] = None):
-        self.catalog_path = catalog_path or CATALOG_PATH
+        selected = Path(catalog_path) if catalog_path else CATALOG_PATH
+        if not selected.is_absolute():
+            selected = config.BASE_DIR / selected
+        self.catalog_path = selected.resolve()
         self.catalog = self._load_catalog()
 
     def _load_catalog(self) -> Dict[str, Any]:
-        if self.catalog_path.exists():
-            try:
-                with open(self.catalog_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                log(f"Failed to load nasheed catalog: {e}", level="WARNING")
-        return {"tracks": []}
+        if not self.catalog_path.is_file():
+            raise RuntimeError(f"Required personal audio catalog is missing: {self.catalog_path}")
+        try:
+            with self.catalog_path.open("r", encoding="utf-8") as handle:
+                catalog = json.load(handle)
+        except Exception as exc:
+            raise RuntimeError(f"Could not load personal audio catalog {self.catalog_path}: {exc}") from exc
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("tracks"), list):
+            raise RuntimeError("Personal audio catalog is malformed: expected a tracks array.")
+        return catalog
 
     def get_tracks(self, status: str = "APPROVED") -> List[Dict[str, Any]]:
-        """Retrieve tracks filtered by approval status."""
-        return [t for t in self.catalog.get("tracks", []) if t.get("approval_status") == status]
+        expected = str(status).upper()
+        return [
+            track for track in self.catalog["tracks"]
+            if str(track.get("approval_status", "")).upper() == expected
+            and str(track.get("creator", "")).strip().lower() == "owner"
+            and str(track.get("external_use_permission", "")).upper() == "OWNER_APPROVED"
+        ]
 
     def _determine_mood(self, content_item: Dict[str, Any]) -> str:
-        """
-        Determine the mood for a content item based on its category.
-        Returns: 'silent', 'emotional', or 'happy'.
-        """
-        category = content_item.get("category", "").lower().strip()
-        content_type = str(content_item.get("type", "")).lower()
+        if is_quranic_content(content_item):
+            return "quran_recitation"
+        category = str(content_item.get("category", "")).lower().strip()
+        return "emotional" if category in EMOTIONAL_CATEGORIES else "happy"
 
-        # Quran recitations are always silent
-        if category in SILENT_CATEGORIES or "qur'an" in content_type or "quran" in content_type or "quran" in category:
-            return "silent"
-
-        # Sad / emotional categories
-        if category in EMOTIONAL_CATEGORIES:
-            return "emotional"
-
-        # Everything else is happy / normal
-        return "happy"
-
-    def select_track_for_content(
-        self,
-        content_item: Dict[str, Any],
-        allow_quran: Optional[bool] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Select an approved audio track matching the content mood.
-
-        Mood rules:
-        - 'silent': Quran recitations → returns None (no background audio).
-        - 'emotional': forgiveness_repentance, evening_adhkar → sad/emotional track.
-        - 'happy': everything else → happy/normal track.
-
-        Falls back to None (silent) when no matching approved track is available.
-        """
-        category = content_item.get("category", "").lower().strip()
-        content_type = str(content_item.get("type", "")).lower()
-
-        # Sacred Recitation Protection Policy:
-        # Islamic norms dictate that Qur'anic recitation should not have background music.
-        allow_on_quran = allow_quran if allow_quran is not None else getattr(config, "ALLOW_NASHEED_ON_QURAN", False)
-        if (category in SILENT_CATEGORIES or "qur'an" in content_type or "quran" in category) and not allow_on_quran:
-            log("Background audio disabled to preserve Qur'anic recitation sanctity.", level="INFO")
+    def select_track_for_content(self, content_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if is_quranic_content(content_item):
             return None
-
-        approved = self.get_tracks(status="APPROVED")
-        if not approved:
-            return None
-
         mood = self._determine_mood(content_item)
+        approved = self.get_tracks("APPROVED")
+        matching = [track for track in approved if str(track.get("mood", "")).lower() == mood]
+        if not matching:
+            raise RuntimeError(
+                f"No owner-approved personal audio track is available for mood '{mood}'. "
+                "Publishing a silent Reel is blocked."
+            )
+        content_id = str(content_item.get("id", ""))
+        index = sum(ord(char) for char in content_id) % len(matching)
+        selected = matching[index]
+        log(f"Selected owner audio: {selected.get('title', selected.get('id'))} [{mood}].")
+        return selected
 
-        # 1. Try to match by mood field
-        mood_matched = [t for t in approved if t.get("mood") == mood]
-        if mood_matched:
-            # Deterministic selection based on content ID for consistency
-            idx = sum(ord(c) for c in str(content_item.get("id", ""))) % len(mood_matched)
-            return mood_matched[idx]
-
-        # 2. Try to match by category in topic_tags
-        tag_matched = []
-        for t in approved:
-            tags = [tag.lower() for tag in t.get("topic_tags", [])]
-            if category in tags:
-                tag_matched.append(t)
-
-        if tag_matched:
-            idx = sum(ord(c) for c in str(content_item.get("id", ""))) % len(tag_matched)
-            return tag_matched[idx]
-
-        # 3. Fallback to first approved track (happy/default)
-        return approved[0]
-
-    def get_highlight_timing(self, track: Dict[str, Any], target_duration: float) -> Tuple[float, float, str]:
-        """
-        Determines start and end timestamps for the highlight segment.
-        Returns (start_seconds, end_seconds, label).
-        """
-        highlights = track.get("approved_highlights", [])
-        track_dur = float(track.get("duration", 180.0))
-
+    def get_highlight_timing(
+        self, track: Dict[str, Any], target_duration: float
+    ) -> Tuple[float, float, str]:
+        track_duration = float(track.get("duration", 0.0))
+        if track_duration <= 0:
+            raise RuntimeError(f"Track duration is missing or invalid for {track.get('id')}.")
+        highlights = track.get("approved_highlights") or []
         if highlights:
-            # Pick primary highlight
-            hl = highlights[0]
-            start = float(hl.get("start", 0.0))
-            label = hl.get("label", "Highlight Refrain")
-            end = min(start + target_duration, track_dur)
-            return start, end, label
+            highlight = highlights[0]
+            start = max(0.0, float(highlight.get("start", 0.0)))
+            requested_end = float(highlight.get("end", start + target_duration))
+            end = min(requested_end, track_duration)
+            if end <= start:
+                raise RuntimeError(f"Invalid approved audio highlight for {track.get('id')}.")
+            return start, end, str(highlight.get("label", "Approved highlight"))
+        start = 0.0
+        return start, min(track_duration, max(0.1, float(target_duration))), "Full available track"
 
-        # Fallback to initial segment after brief intro
-        start = 10.0 if track_dur > (10.0 + target_duration) else 0.0
-        end = min(start + target_duration, track_dur)
-        return start, end, "Default Intro Segment"
+    def _resolve_local_path(self, track: Dict[str, Any]) -> Path:
+        raw_path = str(track.get("local_path", "")).strip()
+        if not raw_path:
+            raise RuntimeError(f"Approved audio track {track.get('id')} has no local_path.")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = config.BASE_DIR / path
+        return path.resolve()
 
-    def _ensure_track_available(self, track: Dict[str, Any]) -> bool:
-        """
-        Ensure track is available locally. If missing or under 1000 bytes,
-        attempts to download from private Dropbox /NoorPost_Audio folder.
-        """
-        local_path = track.get("local_path")
-        if not local_path:
-            return False
-        p = Path(local_path)
-        if p.exists() and p.stat().st_size >= 1000:
-            return True
+    def _ensure_track_available(self, track: Dict[str, Any]) -> Path:
+        path = self._resolve_local_path(track)
+        if path.is_file():
+            try:
+                validate_audio_file(path)
+                return path
+            except Exception as exc:
+                log(f"Existing personal audio failed validation; refreshing it: {exc}", level="WARNING")
+                path.unlink(missing_ok=True)
 
-        # Attempt to pull from private Dropbox storage
-        remote_path = f"/NoorPost_Audio/{p.name}"
+        remote_path = str(track.get("remote_path") or f"/NoorPost_Audio/{path.name}")
         try:
             from instagram import get_dropbox_client
             dbx = get_dropbox_client()
-            if dbx:
-                log(f"☁️  Downloading personal audio '{p.name}' from Dropbox ({remote_path})...")
-                p.parent.mkdir(parents=True, exist_ok=True)
-                md, resp = dbx.files_download(remote_path)
-                with open(p, "wb") as out_f:
-                    out_f.write(resp.content)
-                if p.exists() and p.stat().st_size >= 1000:
-                    log(f"✅ Downloaded '{p.name}' ({p.stat().st_size} bytes).")
-                    return True
-        except Exception as e:
-            log(f"ℹ️  Could not download '{p.name}' from Dropbox: {e}", level="INFO")
-
-        return False
+            log(f"Downloading owner audio from private Dropbox: {remote_path}")
+            _metadata, response = dbx.files_download(remote_path)
+            payload = getattr(response, "content", None)
+            if not payload or len(payload) < 10000:
+                raise RuntimeError("Dropbox returned an empty or undersized audio file.")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".download")
+            temporary.write_bytes(payload)
+            try:
+                details = validate_audio_file(temporary)
+                temporary.replace(path)
+                log(
+                    f"Verified owner audio download: {path.name}, "
+                    f"{details['duration']:.2f}s, {details['mean_volume_db']:.1f} dB."
+                )
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
+            return path
+        except Exception as exc:
+            raise RuntimeError(
+                f"Required owner audio '{path.name}' could not be retrieved and validated "
+                f"from Dropbox ({remote_path}): {exc}"
+            ) from exc
 
     def prepare_audio_for_video(
         self,
         content_item: Dict[str, Any],
         target_duration: float,
         is_spoken_lecture: bool = False,
-        allow_quran: Optional[bool] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Selects track by mood, extracts highlight segment, applies fades, and sets volume.
-        Returns audio details dictionary, or None if no audio should be attached.
-        """
-        track = self.select_track_for_content(content_item, allow_quran=allow_quran)
+        allow_quran: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Return validated audio metadata or raise; never return a silent fallback."""
+        if is_quranic_content(content_item):
+            return prepare_quran_recitation(content_item)
+
+        track = self.select_track_for_content(content_item)
         if not track:
-            return None
+            raise RuntimeError("No audio track was selected; publishing is blocked.")
+        audio_path = self._ensure_track_available(track)
+        validation = validate_audio_file(audio_path)
+        start_sec, end_sec, label = self.get_highlight_timing(track, float(target_duration))
+        if end_sec <= start_sec:
+            raise RuntimeError(f"Selected audio segment is empty for {track.get('id')}.")
 
-        if not self._ensure_track_available(track):
-            log(f"ℹ️ Audio file for '{track.get('title')}' is not present locally or on Dropbox. Defaulting to silent audio.", level="INFO")
-            return None
-        audio_file = track.get("local_path")
-
-        start_sec, end_sec, label = self.get_highlight_timing(track, target_duration)
-
-        # Volume configuration: for spoken content, ensure audio is quiet and speech remains intelligible
-        if is_spoken_lecture:
-            volume = getattr(config, "LECTURE_AUDIO_VOLUME", 0.12)
-        else:
-            volume = getattr(config, "AUDIO_VOLUME", 0.35)
+        volume = (
+            getattr(config, "LECTURE_AUDIO_VOLUME", 0.12)
+            if is_spoken_lecture
+            else getattr(config, "AUDIO_VOLUME", 0.35)
+        )
+        if not 0.0 < float(volume) <= 1.0:
+            raise RuntimeError(f"Configured background audio volume is invalid: {volume}.")
 
         return {
             "track_id": track.get("id"),
             "track_title": track.get("title"),
-            "audio_path": audio_file,
+            "audio_path": str(audio_path),
             "start_time": start_sec,
             "end_time": end_sec,
-            "duration": target_duration,
-            "volume": volume,
+            "duration": float(end_sec - start_sec),
+            "volume": float(volume),
             "highlight_label": label,
-            "attribution": track.get("required_attribution", ""),
-            "license_status": track.get("external_use_permission", "OWNER_APPROVED"),
+            "attribution": "",
+            "license_status": "OWNER_APPROVED",
             "mood": track.get("mood", "happy"),
+            "is_quran_recitation": False,
+            "loop": True,
+            "preserve_original": False,
+            "audio_validation": validation,
         }
 
 
-# Global singleton instance
 nasheed_engine = NasheedEngine()
