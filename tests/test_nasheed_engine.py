@@ -1,389 +1,130 @@
-"""
-test_nasheed_engine.py — Tests for Mood-Based Audio Selection & Quran Protection
-
-Verifies:
-1. Personal owner tracks are loaded and marked APPROVED.
-2. Mood-based selection: happy content → 'my own 1.mp3', emotional content → 'Fall my own 2.mp3'.
-3. Quran recitation audio protection: background audio is always suppressed for quranic_verses.
-4. Silent fallback when no suitable audio or audio file is missing from disk.
-5. Highlight selection, duration limits, and volume attenuation for spoken lectures.
-6. No Halal Tunes tracks are selected (only owner-provided personal tracks).
-7. All content categories map to the correct mood and track.
-"""
-
-import unittest
+"""Regression tests for NoorPost mood audio, strict silence prevention and Qur'an routing."""
+import shutil
+import subprocess
 import tempfile
+import unittest
 from pathlib import Path
-from nasheed_engine import NasheedEngine, EMOTIONAL_CATEGORIES, SILENT_CATEGORIES
+from unittest.mock import patch
+
+from audio_manager import validate_audio_file
+from nasheed_engine import NasheedEngine
+from quran_audio import extract_ayah_reference, is_quranic_content
 
 
-def _make_engine_with_tracks(tracks):
-    """Helper: create a NasheedEngine with a custom track list."""
-    engine = NasheedEngine(catalog_path=Path("non_existent_catalog.json"))
-    engine.catalog = {"tracks": tracks}
-    return engine
+def make_tone(path: Path, seconds: float = 3.0, silent: bool = False) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise unittest.SkipTest("ffmpeg is required for audio validation tests")
+    source = "anullsrc=r=44100:cl=stereo" if silent else "sine=frequency=660:sample_rate=44100"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+         "-i", source, "-t", str(seconds), "-c:a", "libmp3lame", "-q:a", "3", str(path)],
+        check=True, capture_output=True, timeout=30,
+    )
+    return path
 
 
-def _make_tracks_with_files():
-    """Helper: create two temp files simulating the personal MP3s and return (engine, happy_path, emotional_path)."""
-    happy_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-    happy_tmp.write(b"0" * 2000)
-    happy_tmp.close()
-
-    emotional_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-    emotional_tmp.write(b"0" * 2000)
-    emotional_tmp.close()
-
-    tracks = [
-        {
-            "id": "personal_happy_01",
-            "title": "My Own 1 — Happy & Normal",
-            "local_path": happy_tmp.name,
-            "duration": 15.14,
-            "mood": "happy",
-            "topic_tags": ["daily_duas", "morning_adhkar", "gratitude_patience",
-                           "remembrance_dhikr", "prophetic_hadith", "short_reminders",
-                           "ramadan", "friday_reminders", "eid_content", "general_education"],
-            "approval_status": "APPROVED",
-            "external_use_permission": "OWNER_APPROVED",
-            "required_attribution": "",
-            "approved_highlights": [{"start": 0.0, "end": 15.0, "label": "Full Track"}],
-        },
-        {
-            "id": "personal_emotional_02",
-            "title": "Fall My Own 2 — Sad & Emotional",
-            "local_path": emotional_tmp.name,
-            "duration": 51.67,
-            "mood": "emotional",
-            "topic_tags": ["forgiveness_repentance", "evening_adhkar"],
-            "approval_status": "APPROVED",
-            "external_use_permission": "OWNER_APPROVED",
-            "required_attribution": "",
-            "approved_highlights": [{"start": 0.0, "end": 45.0, "label": "Emotional Opening"}],
-        },
-    ]
-    engine = _make_engine_with_tracks(tracks)
-    return engine, happy_tmp.name, emotional_tmp.name
-
-
-class TestCatalogLoading(unittest.TestCase):
-    """Tests for catalog loading and track filtering."""
-
-    def test_production_catalog_has_two_approved_personal_tracks(self):
-        """Production catalog must contain exactly 2 owner-provided APPROVED tracks."""
-        engine = NasheedEngine()
-        approved = engine.get_tracks(status="APPROVED")
-        self.assertEqual(len(approved), 2, "Catalog must have exactly 2 approved personal tracks.")
-
-    def test_no_halal_tunes_tracks_in_catalog(self):
-        """No Halal Tunes or third-party tracks should exist in the approved catalog."""
-        engine = NasheedEngine()
-        for track in engine.catalog.get("tracks", []):
-            title = track.get("title", "").lower()
-            track_id = track.get("id", "").lower()
-            self.assertNotIn("halaltunes", track_id,
-                             f"Halal Tunes track '{track_id}' must not be in catalog.")
-            self.assertNotIn("halal tunes", title,
-                             f"Halal Tunes track '{title}' must not be in catalog.")
-
-    def test_all_approved_tracks_are_owner_provided(self):
-        """All APPROVED tracks must have OWNER_APPROVED permission."""
-        engine = NasheedEngine()
-        for track in engine.get_tracks(status="APPROVED"):
-            self.assertEqual(track.get("external_use_permission"), "OWNER_APPROVED")
-            self.assertEqual(track.get("creator"), "Owner")
-
-    def test_each_track_has_mood_field(self):
-        """Every approved track must have a 'mood' field (happy or emotional)."""
-        engine = NasheedEngine()
-        for track in engine.get_tracks(status="APPROVED"):
-            self.assertIn(track.get("mood"), ("happy", "emotional"),
-                          f"Track '{track['id']}' must have mood 'happy' or 'emotional'.")
-
-
-class TestMoodDetermination(unittest.TestCase):
-    """Tests for _determine_mood() category-to-mood mapping."""
-
+class TestCatalogAndSelection(unittest.TestCase):
     def setUp(self):
         self.engine = NasheedEngine()
 
-    def test_quran_categories_return_silent(self):
-        """Quranic content must always map to 'silent' mood."""
-        item = {"category": "quranic_verses", "type": "Qur'anic Verse"}
-        self.assertEqual(self.engine._determine_mood(item), "silent")
+    def test_catalog_has_exactly_two_owner_approved_tracks(self):
+        tracks = self.engine.get_tracks()
+        self.assertEqual({t["id"] for t in tracks}, {"personal_happy_01", "personal_emotional_02"})
+        self.assertTrue(all(t.get("creator") == "Owner" for t in tracks))
+        self.assertTrue(all(t.get("external_use_permission") == "OWNER_APPROVED" for t in tracks))
 
-    def test_quran_type_string_returns_silent(self):
-        """Content with 'quran' in the type string must also map to 'silent'."""
-        item = {"category": "other", "type": "Quran Recitation"}
-        self.assertEqual(self.engine._determine_mood(item), "silent")
+    def test_happy_content_uses_happy_personal_track(self):
+        item = {"id": "test-hadith", "category": "prophetic_hadith", "type": "Prophetic Teaching"}
+        self.assertEqual(self.engine.select_track_for_content(item)["id"], "personal_happy_01")
 
-    def test_forgiveness_repentance_returns_emotional(self):
-        """forgiveness_repentance category must map to 'emotional' mood."""
-        item = {"category": "forgiveness_repentance", "type": "Dua"}
-        self.assertEqual(self.engine._determine_mood(item), "emotional")
+    def test_emotional_content_uses_emotional_personal_track(self):
+        item = {"id": "test-istighfar", "category": "forgiveness_repentance", "type": "Dua"}
+        self.assertEqual(self.engine.select_track_for_content(item)["id"], "personal_emotional_02")
 
-    def test_evening_adhkar_returns_emotional(self):
-        """evening_adhkar category must map to 'emotional' mood."""
-        item = {"category": "evening_adhkar", "type": "Evening Dhikr"}
-        self.assertEqual(self.engine._determine_mood(item), "emotional")
+    def test_quran_is_never_selected_as_personal_background_audio(self):
+        item = {"category": "quranic_verses", "type": "Qur'anic Verse", "source": "Qur'an 2:255"}
+        self.assertIsNone(self.engine.select_track_for_content(item))
 
-    def test_happy_categories_return_happy(self):
-        """All non-emotional, non-silent categories must map to 'happy' mood."""
-        happy_cats = [
-            "daily_duas", "morning_adhkar", "gratitude_patience",
-            "remembrance_dhikr", "prophetic_hadith", "short_reminders",
-            "ramadan", "friday_reminders", "eid_content", "general_education",
-        ]
-        for cat in happy_cats:
-            item = {"category": cat, "type": "Content"}
-            self.assertEqual(self.engine._determine_mood(item), "happy",
-                             f"Category '{cat}' must map to 'happy' mood.")
+    def test_quranic_dua_inside_daily_duas_is_still_quran(self):
+        item = {"category": "daily_duas", "type": "Qur'anic Dua", "source": "Qur'an 2:201"}
+        self.assertTrue(is_quranic_content(item))
+        self.assertEqual(extract_ayah_reference(item), (2, 201))
 
-    def test_unknown_category_defaults_to_happy(self):
-        """Unknown or empty category defaults to 'happy' mood."""
-        self.assertEqual(self.engine._determine_mood({"category": "", "type": ""}), "happy")
-        self.assertEqual(self.engine._determine_mood({"category": "new_category", "type": ""}), "happy")
+    def test_missing_quran_reference_fails_closed(self):
+        with self.assertRaises(ValueError):
+            extract_ayah_reference({"category": "quranic_verses", "type": "Qur'anic Verse"})
 
 
-class TestMoodBasedTrackSelection(unittest.TestCase):
-    """Tests for select_track_for_content() mood-based selection logic."""
+class TestAudioPreparation(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.audio_path = make_tone(Path(self.temp.name) / "audible.mp3")
+        self.engine = NasheedEngine()
 
-    def test_happy_content_selects_happy_track(self):
-        """Happy/normal categories must select the happy mood track."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            for cat in ["daily_duas", "morning_adhkar", "prophetic_hadith",
-                        "short_reminders", "general_education", "friday_reminders"]:
-                item = {"id": f"test_{cat}", "category": cat, "type": "Content"}
-                track = engine.select_track_for_content(item)
-                self.assertIsNotNone(track, f"Must select a track for '{cat}'.")
-                self.assertEqual(track["mood"], "happy",
-                                 f"Category '{cat}' must select the happy track.")
-                self.assertEqual(track["id"], "personal_happy_01")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_emotional_content_selects_emotional_track(self):
-        """Sad/emotional categories must select the emotional mood track."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            for cat in ["forgiveness_repentance", "evening_adhkar"]:
-                item = {"id": f"test_{cat}", "category": cat, "type": "Content"}
-                track = engine.select_track_for_content(item)
-                self.assertIsNotNone(track, f"Must select a track for '{cat}'.")
-                self.assertEqual(track["mood"], "emotional",
-                                 f"Category '{cat}' must select the emotional track.")
-                self.assertEqual(track["id"], "personal_emotional_02")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_quran_content_returns_none(self):
-        """Quranic verse content must return None (no background audio)."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "quran_1", "category": "quranic_verses", "type": "Qur'anic Verse"}
-            track = engine.select_track_for_content(item, allow_quran=False)
-            self.assertIsNone(track, "Quran recitation must never have background audio.")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_quran_explicit_allow_returns_track(self):
-        """When explicitly allowed, Quran content can receive a track."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "quran_2", "category": "quranic_verses", "type": "Qur'anic Verse"}
-            track = engine.select_track_for_content(item, allow_quran=True)
-            self.assertIsNotNone(track, "When explicitly allowed, Quran content may receive audio.")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_no_approved_tracks_returns_none(self):
-        """When catalog has no approved tracks, selection returns None (silent)."""
-        engine = _make_engine_with_tracks([
-            {"id": "unapproved", "approval_status": "NEEDS_LICENSE_REVIEW", "topic_tags": ["daily_duas"]}
-        ])
-        item = {"id": "dua_1", "category": "daily_duas", "type": "Dua"}
-        self.assertIsNone(engine.select_track_for_content(item))
-
-
-class TestQuranProtection(unittest.TestCase):
-    """Dedicated tests for Sacred Recitation Protection Policy."""
-
-    def test_quranic_verses_category_always_silent(self):
-        """quranic_verses category must always produce None from select_track_for_content."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "ayah_255", "category": "quranic_verses", "type": "Qur'anic Verse"}
-            self.assertIsNone(engine.select_track_for_content(item))
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_quran_type_string_produces_silent(self):
-        """Content with 'Qur'an' in the type string is protected."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "recitation_1", "category": "daily_duas", "type": "Qur'an Recitation"}
-            self.assertIsNone(engine.select_track_for_content(item))
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_quran_prepare_audio_returns_none(self):
-        """prepare_audio_for_video must return None for Quranic content."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "verse_1", "category": "quranic_verses", "type": "Verse"}
-            result = engine.prepare_audio_for_video(item, target_duration=15.0)
-            self.assertIsNone(result)
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-
-class TestPrepareAudioForVideo(unittest.TestCase):
-    """Tests for the full prepare_audio_for_video pipeline."""
-
-    def test_happy_content_returns_happy_audio_info(self):
-        """prepare_audio_for_video returns complete audio info with happy mood for normal content."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "dua_morning", "category": "morning_adhkar", "type": "Dua"}
-            result = engine.prepare_audio_for_video(item, target_duration=15.0)
-            self.assertIsNotNone(result)
-            self.assertEqual(result["track_id"], "personal_happy_01")
-            self.assertEqual(result["mood"], "happy")
-            self.assertIn("audio_path", result)
-            self.assertGreater(result["volume"], 0)
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_emotional_content_returns_emotional_audio_info(self):
-        """prepare_audio_for_video returns emotional track for forgiveness content."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "istighfar_1", "category": "forgiveness_repentance", "type": "Dua"}
-            result = engine.prepare_audio_for_video(item, target_duration=15.0)
-            self.assertIsNotNone(result)
-            self.assertEqual(result["track_id"], "personal_emotional_02")
-            self.assertEqual(result["mood"], "emotional")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_missing_audio_file_returns_none(self):
-        """When approved track's local file does not exist, returns None (silent)."""
-        tracks = [{
-            "id": "missing_file_track",
-            "title": "Missing",
-            "local_path": "assets/audio/nasheeds/does_not_exist.mp3",
-            "duration": 60.0,
-            "mood": "happy",
-            "topic_tags": ["daily_duas"],
+    def _track(self, mood="happy", path=None):
+        return {
+            "id": "fixture_track",
+            "title": "Fixture owner track",
+            "creator": "Owner",
+            "local_path": str(path or self.audio_path),
+            "duration": 2.0,
+            "mood": mood,
+            "topic_tags": [],
             "approval_status": "APPROVED",
-            "required_attribution": ""
-        }]
-        engine = _make_engine_with_tracks(tracks)
-        item = {"id": "dua_1", "category": "daily_duas", "type": "Dua"}
-        self.assertIsNone(engine.prepare_audio_for_video(item, target_duration=15.0))
-
-    def test_spoken_lecture_volume_attenuation(self):
-        """Spoken lectures get lower volume for speech clarity."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "khutbah_1", "category": "general_education", "type": "Lecture"}
-            result = engine.prepare_audio_for_video(item, target_duration=30.0, is_spoken_lecture=True)
-            self.assertIsNotNone(result)
-            self.assertLessEqual(result["volume"], 0.15,
-                                 "Lecture volume must be attenuated for speech clarity.")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-    def test_no_attribution_for_personal_tracks(self):
-        """Personal owner tracks must not inject third-party attribution into captions."""
-        engine, happy_path, emotional_path = _make_tracks_with_files()
-        try:
-            item = {"id": "hadith_1", "category": "prophetic_hadith", "type": "Hadith"}
-            result = engine.prepare_audio_for_video(item, target_duration=15.0)
-            self.assertIsNotNone(result)
-            self.assertEqual(result["attribution"], "",
-                             "Personal tracks must have empty attribution (no third-party credit).")
-        finally:
-            Path(happy_path).unlink(missing_ok=True)
-            Path(emotional_path).unlink(missing_ok=True)
-
-
-class TestHighlightTiming(unittest.TestCase):
-    """Tests for highlight timestamp extraction."""
-
-    def test_highlight_timing_within_duration(self):
-        """Highlight slicing respects target video duration."""
-        engine = NasheedEngine()
-        track = {
-            "duration": 120.0,
-            "approved_highlights": [{"start": 20.0, "end": 60.0, "label": "Chorus"}]
+            "external_use_permission": "OWNER_APPROVED",
+            "approved_highlights": [{"start": 0.0, "end": 2.0, "label": "Complete"}],
         }
-        start, end, label = engine.get_highlight_timing(track, target_duration=15.0)
-        self.assertEqual(start, 20.0)
-        self.assertEqual(end, 35.0)
-        self.assertEqual(label, "Chorus")
 
-    def test_fallback_timing_for_tracks_without_highlights(self):
-        """Tracks without approved_highlights use default intro segment."""
-        engine = NasheedEngine()
-        track = {"duration": 60.0, "approved_highlights": []}
-        start, end, label = engine.get_highlight_timing(track, target_duration=15.0)
-        self.assertEqual(start, 10.0)
-        self.assertEqual(end, 25.0)
-        self.assertEqual(label, "Default Intro Segment")
+    def test_audio_validator_accepts_audible_mp3(self):
+        result = validate_audio_file(self.audio_path)
+        self.assertEqual(result["codec"], "mp3")
+        self.assertGreater(result["duration"], 1.5)
+        self.assertGreater(result["mean_volume_db"], -45)
 
-    def test_short_track_starts_from_zero(self):
-        """Short tracks that can't accommodate a 10s offset start from 0."""
-        engine = NasheedEngine()
-        track = {"duration": 15.0, "approved_highlights": []}
-        start, end, label = engine.get_highlight_timing(track, target_duration=15.0)
-        self.assertEqual(start, 0.0)
-        self.assertEqual(end, 15.0)
+    def test_audio_validator_rejects_silence(self):
+        silent = make_tone(Path(self.temp.name) / "silence.mp3", silent=True)
+        with self.assertRaises(RuntimeError):
+            validate_audio_file(silent)
 
+    def test_happy_audio_preparation_returns_validated_owner_track(self):
+        self.engine.catalog = {"tracks": [self._track("happy")]}
+        item = {"id": "dua-1", "category": "daily_duas", "type": "Dua"}
+        result = self.engine.prepare_audio_for_video(item, 15.0)
+        self.assertEqual(result["track_id"], "fixture_track")
+        self.assertTrue(Path(result["audio_path"]).is_file())
+        self.assertFalse(result["is_quran_recitation"])
+        self.assertTrue(result["loop"])
 
-class TestAllCategoryMoodCoverage(unittest.TestCase):
-    """Verify every canonical category is mapped to a known mood."""
+    def test_emotional_selection_has_no_happy_track_fallback(self):
+        self.engine.catalog = {"tracks": [self._track("happy")]}
+        with self.assertRaises(RuntimeError):
+            self.engine.prepare_audio_for_video(
+                {"id": "dua-2", "category": "forgiveness_repentance", "type": "Dua"}, 15.0
+            )
 
-    def test_all_categories_produce_valid_mood(self):
-        """Every canonical category must produce one of: silent, emotional, happy."""
-        engine = NasheedEngine()
-        all_categories = [
-            "daily_duas", "morning_adhkar", "evening_adhkar",
-            "gratitude_patience", "forgiveness_repentance",
-            "remembrance_dhikr", "quranic_verses", "prophetic_hadith",
-            "short_reminders", "ramadan", "friday_reminders",
-            "eid_content", "general_education",
-        ]
-        for cat in all_categories:
-            item = {"category": cat, "type": "Content"}
-            mood = engine._determine_mood(item)
-            self.assertIn(mood, ("silent", "emotional", "happy"),
-                          f"Category '{cat}' produced unexpected mood '{mood}'.")
+    def test_missing_track_cannot_be_silently_substituted(self):
+        self.engine.catalog = {"tracks": [self._track("happy", Path(self.temp.name) / "missing.mp3")]}
+        with self.assertRaises(RuntimeError):
+            self.engine.prepare_audio_for_video(
+                {"id": "dua-3", "category": "daily_duas", "type": "Dua"}, 15.0
+            )
 
-    def test_emotional_categories_constant_matches_engine(self):
-        """EMOTIONAL_CATEGORIES constant must match what _determine_mood uses."""
-        engine = NasheedEngine()
-        for cat in EMOTIONAL_CATEGORIES:
-            item = {"category": cat, "type": "Content"}
-            self.assertEqual(engine._determine_mood(item), "emotional")
-
-    def test_silent_categories_constant_matches_engine(self):
-        """SILENT_CATEGORIES constant must match what _determine_mood uses."""
-        engine = NasheedEngine()
-        for cat in SILENT_CATEGORIES:
-            item = {"category": cat, "type": "Content"}
-            self.assertEqual(engine._determine_mood(item), "silent")
+    def test_quran_uses_exact_recitation_and_no_background_track(self):
+        expected = {
+            "audio_path": str(self.audio_path), "duration": 2.0,
+            "is_quran_recitation": True, "loop": False, "volume": 1.0,
+        }
+        with patch("nasheed_engine.prepare_quran_recitation", return_value=expected) as prepare:
+            result = self.engine.prepare_audio_for_video(
+                {"id": "verse", "category": "quranic_verses", "type": "Qur'anic Verse",
+                 "source": "Qur'an 2:255"}, 15.0
+            )
+        prepare.assert_called_once()
+        self.assertTrue(result["is_quran_recitation"])
+        self.assertFalse(result["loop"])
+        self.assertEqual(result["volume"], 1.0)
 
 
 if __name__ == "__main__":

@@ -116,8 +116,34 @@ def validate_and_build_command(env: Optional[Dict[str, str]] = None) -> List[str
     return cmd
 
 
+def run_audio_regression_suite() -> None:
+    """
+    Run offline, non-publishing audio/video regression tests before every
+    scheduled or manually-triggered production generation.
+    These tests use generated local fixtures and mocked publishing clients.
+    """
+    suites = [
+        ("audio engine", "test_nasheed_engine.py"),
+        ("video/audio mux and silent-output guard", "test_video_generator.py"),
+        ("pipeline fail-closed integration", "test_pipeline.py"),
+    ]
+    for label, pattern in suites:
+        command = [
+            sys.executable, "-m", "unittest", "discover",
+            "-s", "tests", "-p", pattern, "-v",
+        ]
+        print(f"[NoorPost Preflight] Running {label}: {' '.join(command)}", flush=True)
+        result = subprocess.run(command, shell=False, timeout=300)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Preflight suite '{label}' failed with exit code {result.returncode}. "
+                "Publishing is blocked."
+            )
+
+
 def main():
     try:
+        run_audio_regression_suite()
         cmd = validate_and_build_command()
         print(f"[NoorPost Workflow Runner] Executing safe process: {' '.join(cmd)}")
         # Execute securely with shell=False, passing list directly to OS

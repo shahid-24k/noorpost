@@ -118,7 +118,7 @@ SHOW_BISMILLAH = os.getenv("SHOW_BISMILLAH", "True").strip().lower() in ("true",
 SHOW_WATERMARK = os.getenv("SHOW_WATERMARK", "True").strip().lower() in ("true", "1", "yes")
 
 # Audio Controls
-AUDIO_VOLUME = float(os.getenv("AUDIO_VOLUME", "0.35"))
+AUDIO_VOLUME = float(os.getenv("AUDIO_VOLUME", "0.85"))
 
 # Platform safe margins (Reels / Shorts overlay boundaries)
 SAFE_MARGIN_X = int(os.getenv("SAFE_MARGIN_X", "80"))
