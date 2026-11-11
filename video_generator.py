@@ -515,5 +515,5 @@ def generate_video(
         f"duration={final_audio_check['duration']:.2f}s, "
         f"mean={final_audio_check['mean_volume_db']:.1f} dB."
     )
-    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)
+    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)")
     return out_path, preview_path
