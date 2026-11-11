@@ -211,8 +211,11 @@ def generate_media(
         raise RuntimeError("The audio engine returned no playable track; publishing is blocked.")
 
     if audio_info.get("is_quran_recitation"):
-        # Record and render long enough for the complete original ayah recitation.
-        video_dur = max(float(video_dur), float(audio_info.get("duration", 0.0)))
+        # Qur'an Reels end with the exact recitation, not a silent tail.
+        recitation_duration = float(audio_info.get("duration", 0.0))
+        if recitation_duration <= 0:
+            raise RuntimeError("The exact Qur'an recitation has no valid duration; publishing is blocked.")
+        video_dur = recitation_duration
 
     if audio_info.get("attribution"):
         if audio_info["attribution"] not in caption:
