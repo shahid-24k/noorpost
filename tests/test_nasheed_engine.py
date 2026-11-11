@@ -11,7 +11,7 @@ from nasheed_engine import NasheedEngine
 from quran_audio import extract_ayah_reference, is_quranic_content
 
 
-def make_tone(path: Path, seconds: float = 2.0, silent: bool = False) -> Path:
+def make_tone(path: Path, seconds: float = 3.0, silent: bool = False) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise unittest.SkipTest("ffmpeg is required for audio validation tests")
