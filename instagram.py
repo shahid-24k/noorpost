@@ -28,6 +28,9 @@ Includes network retry handling and security protections.
 """
 
 import time
+import json
+import hashlib
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -113,7 +116,7 @@ def upload_to_dropbox(video_path: str, caption: str, max_retries: int = 3) -> Di
             )
             log("✅ Caption file uploaded to Dropbox.")
 
-            # Retrieve or generate shared link (optional fallback for Make.com / metadata)
+            # Retrieve or generate shared link (direct video download URL for Make.com / Instagram)
             shared_url = dropbox_video_path
             try:
                 link = dbx.sharing_create_shared_link_with_settings(dropbox_video_path)
@@ -127,11 +130,50 @@ def upload_to_dropbox(video_path: str, caption: str, max_retries: int = 3) -> Di
                     pass
 
             log(f"🔗 Dropbox link generated: {shared_url}")
+
+            # Compute sha256 checksum of the verified video
+            sha256_hash = hashlib.sha256()
+            with open(video_path, "rb") as vf:
+                for byte_block in iter(lambda: vf.read(65536), b""):
+                    sha256_hash.update(byte_block)
+            video_checksum = sha256_hash.hexdigest()
+
+            # Create publication ready manifest marker (uploaded LAST)
+            ready_name = Path(video_path).stem + "_ready.json"
+            dropbox_ready_path = f"{dropbox_folder}/{ready_name}"
+
+            manifest_data = {
+                "version": "2.3",
+                "generation_id": Path(video_path).stem,
+                "video_file": file_name,
+                "video_path": dropbox_video_path,
+                "caption_file": caption_name,
+                "caption_path": dropbox_caption_path,
+                "ready_marker_file": ready_name,
+                "ready_marker_path": dropbox_ready_path,
+                "video_sha256": video_checksum,
+                "video_size_bytes": Path(video_path).stat().st_size if Path(video_path).exists() else 0,
+                "caption_length": len(caption),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "status": "ready_for_publishing",
+                "direct_video_url": str(shared_url),
+            }
+
+            log("📋 Uploading publication ready marker (_ready.json) to Dropbox (LAST)...")
+            dbx.files_upload(
+                json.dumps(manifest_data, indent=2, ensure_ascii=False).encode("utf-8"),
+                dropbox_ready_path,
+                mode=dropbox.files.WriteMode("overwrite")
+            )
+            log(f"✅ Ready marker uploaded to Dropbox: {dropbox_ready_path}")
+
             return {
                 "success": True,
                 "platform": "dropbox_make",
                 "url": shared_url,
                 "remote_id": dropbox_video_path,
+                "manifest_path": dropbox_ready_path,
+                "video_sha256": video_checksum,
                 "error": None
             }
 
