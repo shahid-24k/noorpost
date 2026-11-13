@@ -63,6 +63,35 @@ def upload_to_dropbox(video_path: str, caption: str, max_retries: int = 3) -> Di
 
     last_error = ""
 
+    # Pre-upload integrity check: enforce video and audio validation before uploading
+    try:
+        from video_generator import validate_video_file
+        from audio_manager import validate_mp4_audio
+
+        v_ok, v_err, _ = validate_video_file(video_path)
+        if not v_ok:
+            log(f"⛔ Pre-upload validation failed: {v_err}. Blocking upload to Dropbox.", level="ERROR")
+            return {
+                "success": False,
+                "platform": "dropbox_make",
+                "url": None,
+                "remote_id": None,
+                "error": f"PRE_UPLOAD_VALIDATION_FAILED: {v_err}"
+            }
+
+        a_ok, a_err, _ = validate_mp4_audio(video_path)
+        if not a_ok:
+            log(f"⛔ Pre-upload audio validation failed: {a_err}. Blocking upload to Dropbox.", level="ERROR")
+            return {
+                "success": False,
+                "platform": "dropbox_make",
+                "url": None,
+                "remote_id": None,
+                "error": f"PRE_UPLOAD_AUDIO_VALIDATION_FAILED: {a_err}"
+            }
+    except Exception as e:
+        log(f"Pre-upload validation check warning: {e}", level="WARNING")
+
     for attempt in range(1, max_retries + 1):
         try:
             log(f"☁️  Uploading video to Dropbox (attempt {attempt}/{max_retries}): {dropbox_video_path}")

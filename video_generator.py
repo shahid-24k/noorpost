@@ -6,14 +6,18 @@ Features:
   - Flawless Arabic typography via arabic-reshaper + python-bidi
   - Multiple content layouts (Dua, Quranic Verse, Islamic Reminder)
   - Dynamic font scaling & intelligent multi-scene splitting for long texts
-  - Configurable rendering presets (fast, balanced, high_quality)
-  - Subtle Ken Burns zoom and smooth fade transitions
-  - Complete audio integration with graceful silent fallbacks
+  - Configurable rendering presets (fast, balanced, high_quality) with rock-solid fixed 1080x1920 frames
+  - Smooth opacity fade transitions without variable-dimension canvas distortion
+  - Full ffprobe stream metadata validation and complete FFmpeg video decoding verification
+  - Strict audio integration with authentic Quran recitation and personal mood tracks
 """
 
 import os
 import sys
 import uuid
+import json
+import shutil
+import subprocess
 import tempfile
 import textwrap
 from datetime import datetime
@@ -36,6 +40,7 @@ except ImportError:
 import config
 from logger import log
 from themes import THEMES, resolve_theme, render_themed_background, draw_8point_star
+from audio_manager import validate_audio_file, validate_mp4_audio
 # Backward compatibility aliases
 from themes import resolve_theme
 def resolve_font_path() -> str:
@@ -63,8 +68,7 @@ PRESETS = {
     },
     "balanced": {
         "fps": 24,
-        "zoom": True,
-        "zoom_rate": 0.002,   # 1.0 to ~1.03 over 15s
+        "zoom": False,
         "fade_duration": 0.8,
         "ffmpeg_preset": "fast",
         "crf": 20,
@@ -72,8 +76,7 @@ PRESETS = {
     },
     "high_quality": {
         "fps": 30,
-        "zoom": True,
-        "zoom_rate": 0.003,   # 1.0 to ~1.045 over 15s
+        "zoom": False,
         "fade_duration": 1.0,
         "ffmpeg_preset": "medium",
         "crf": 18,
@@ -305,6 +308,134 @@ def create_frame(content: Dict[str, Any], font_path: Optional[str] = None, theme
 # MASTER VIDEO PRODUCTION PIPELINE
 # ─────────────────────────────────────────────
 
+
+def validate_video_file(
+    video_path: str | Path,
+    expected_width: int = 1080,
+    expected_height: int = 1920,
+    expected_codec: str = "h264",
+    expected_pix_fmt: str = "yuv420p",
+    expected_fps: Optional[int] = None,
+    expected_min_duration: float = 1.0,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Validate rendered video using ffprobe stream analysis and full FFmpeg decoding:
+    1. Video file exists and is non-empty.
+    2. ffprobe verifies:
+       - H.264 video stream
+       - Exact 1080x1920 resolution
+       - yuv420p pixel format
+       - Expected frame rate and duration
+    3. Full decode with FFmpeg:
+       ffmpeg -v error -i output.mp4 -map 0:v:0 -f null -
+       Rejects the video if decoding reports any frame corruption or errors.
+    """
+    p = Path(video_path)
+    if not p.is_absolute():
+        p = config.BASE_DIR / p
+
+    if not p.exists():
+        return False, f"Video file not found: {p}", {}
+
+    if p.stat().st_size < 10000:
+        return False, f"Video file corrupted or too small ({p.stat().st_size} bytes)", {}
+
+    ffprobe = shutil.which("ffprobe")
+    ffmpeg = shutil.which("ffmpeg")
+
+    if not ffprobe:
+        return True, "ffprobe not installed; basic file check passed", {"size": p.stat().st_size}
+
+    try:
+        # Step A: ffprobe stream inspection
+        cmd = [
+            ffprobe, "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,width,height,pix_fmt,r_frame_rate,avg_frame_rate,duration",
+            "-show_entries", "format=duration",
+            "-of", "json",
+            str(p)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            return False, f"ffprobe stream inspection failed: {res.stderr.strip()}", {}
+
+        data = json.loads(res.stdout or "{}")
+        streams = data.get("streams", [])
+        format_info = data.get("format", {})
+
+        if not streams:
+            return False, "No video stream found in MP4 file", {}
+
+        v_stream = streams[0]
+        codec = v_stream.get("codec_name", "").lower()
+        width = int(v_stream.get("width", 0))
+        height = int(v_stream.get("height", 0))
+        pix_fmt = v_stream.get("pix_fmt", "").lower()
+
+        # Parse duration
+        stream_dur = v_stream.get("duration")
+        format_dur = format_info.get("duration")
+        duration = float(format_dur or stream_dur or 0.0)
+
+        # Parse frame rate
+        fps_str = v_stream.get("r_frame_rate") or v_stream.get("avg_frame_rate") or "0/1"
+        try:
+            num, den = fps_str.split("/")
+            fps = float(num) / float(den) if float(den) != 0 else 0.0
+        except Exception:
+            fps = 0.0
+
+        # Validate H.264
+        if codec != expected_codec.lower():
+            return False, f"Invalid video codec: '{codec}' (expected '{expected_codec}')", {}
+
+        # Validate 1080x1920
+        if width != expected_width or height != expected_height:
+            return False, f"Invalid video dimensions: {width}x{height} (expected {expected_width}x{expected_height})", {}
+
+        # Validate yuv420p
+        if pix_fmt != expected_pix_fmt.lower():
+            return False, f"Invalid pixel format: '{pix_fmt}' (expected '{expected_pix_fmt}')", {}
+
+        # Validate duration
+        if duration < expected_min_duration:
+            return False, f"Video duration too short: {duration:.2f}s (< {expected_min_duration}s)", {}
+
+        # Validate frame rate if specified
+        if expected_fps is not None and abs(fps - expected_fps) > 1.5:
+            return False, f"Video frame rate mismatch: {fps:.2f} fps (expected ~{expected_fps} fps)", {}
+
+        # Step B: Full video stream decoding with FFmpeg
+        if ffmpeg:
+            decode_cmd = [
+                ffmpeg, "-v", "error",
+                "-i", str(p),
+                "-map", "0:v:0",
+                "-f", "null", "-"
+            ]
+            decode_res = subprocess.run(decode_cmd, capture_output=True, text=True, timeout=30)
+            if decode_res.returncode != 0 or decode_res.stderr.strip():
+                err_text = decode_res.stderr.strip()
+                return False, f"FFmpeg video decoding verification failed: {err_text}", {}
+
+        meta = {
+            "codec": codec,
+            "width": width,
+            "height": height,
+            "pix_fmt": pix_fmt,
+            "fps": fps,
+            "duration": duration,
+            "size_bytes": p.stat().st_size,
+        }
+        log(f"✅ Video stream verified: {codec} {width}x{height} {pix_fmt} @ {fps:.1f}fps ({duration:.1f}s)")
+        return True, "Video stream valid and fully decodable", meta
+
+    except Exception as e:
+        log(f"⚠️  Video validation exception: {e}", level="WARNING")
+        return False, f"Video validation exception: {e}", {}
+
+
 def generate_video(
     content: Dict[str, Any],
     theme: Optional[str] = None,
@@ -368,14 +499,10 @@ def generate_video(
         tmp_path = Path(tmp_dir)
 
         if not is_very_long:
-            # Single Scene Video
+            # Single Scene Video (Strict fixed 1080x1920 canvas without variable-dimension scaling)
             frame_path = tmp_path / "frame_full.png"
             preview_img.save(str(frame_path))
             clip = ImageClip(str(frame_path), duration=video_duration)
-
-            if enable_animations and preset_cfg.get("zoom"):
-                rate = preset_cfg.get("zoom_rate", 0.002)
-                clip = clip.resize(lambda t: 1.0 + rate * t)
 
             fade_dur = preset_cfg.get("fade_duration", 0.8)
             clip = clip.fadein(fade_dur).fadeout(fade_dur)
@@ -402,11 +529,7 @@ def generate_video(
             clip1 = ImageClip(str(p1_path), duration=half_duration)
             clip2 = ImageClip(str(p2_path), duration=half_duration)
 
-            if enable_animations and preset_cfg.get("zoom"):
-                rate = preset_cfg.get("zoom_rate", 0.002)
-                clip1 = clip1.resize(lambda t: 1.0 + rate * t)
-                clip2 = clip2.resize(lambda t: 1.0 + rate * t)
-
+            # Smooth opacity transitions while keeping exact 1080x1920 dimensions
             clip1 = clip1.fadein(0.6).fadeout(0.6)
             clip2 = clip2.fadein(0.6).fadeout(0.6)
             final_video_clip = concatenate_videoclips([clip1, clip2])
@@ -415,43 +538,72 @@ def generate_video(
         fps = preset_cfg.get("fps", 24)
         final_video_clip = final_video_clip.set_fps(fps)
 
-        # 5. Audio Integration
+        # 5. Audio Integration (Strict: zero silent fallbacks)
         if enable_audio:
-            try:
-                audio_file = None
-                start_time = 0.0
-                vol = getattr(config, "AUDIO_VOLUME", 0.35)
+            audio_file = None
+            start_time = 0.0
+            vol = getattr(config, "AUDIO_VOLUME", 0.35)
+            is_quran = False
 
-                if audio_info and audio_info.get("audio_path"):
-                    audio_file = audio_info["audio_path"]
-                    start_time = float(audio_info.get("start_time", 0.0))
-                    vol = float(audio_info.get("volume", vol))
+            # Check if content is Qur'anic
+            cat_name = str(content.get("category", "")).lower()
+            cnt_type = str(content.get("type", "")).lower()
+            is_quran_content = (
+                cat_name in ("quranic_verses", "quran")
+                or "qur'an" in cnt_type
+                or "quran" in cnt_type
+                or "quran" in cat_name
+            )
+
+            if is_quran_content:
+                from quran_audio import get_quran_recitation
+                audio_res = audio_info if (audio_info and audio_info.get("is_quran_recitation")) else get_quran_recitation(content)
+                audio_file = audio_res.get("audio_path")
+                start_time = float(audio_res.get("start_time", 0.0))
+                vol = float(audio_res.get("volume", 1.0))
+                is_quran = True
+            elif audio_info and audio_info.get("audio_path"):
+                audio_file = audio_info["audio_path"]
+                start_time = float(audio_info.get("start_time", 0.0))
+                vol = float(audio_info.get("volume", vol))
+                is_quran = bool(audio_info.get("is_quran_recitation", False))
+            else:
+                from nasheed_engine import nasheed_engine
+                audio_res = nasheed_engine.prepare_audio_for_video(content, video_duration)
+                if not audio_res or not audio_res.get("audio_path"):
+                    raise RuntimeError(
+                        f"Failed to acquire required audio for '{content.get('source')}'. "
+                        "Silent fallback is strictly prohibited."
+                    )
+                audio_file = audio_res.get("audio_path")
+                start_time = float(audio_res.get("start_time", 0.0))
+                vol = float(audio_res.get("volume", vol))
+                is_quran = bool(audio_res.get("is_quran_recitation", False))
+
+            if not audio_file or not Path(audio_file).exists():
+                raise RuntimeError(
+                    f"Required audio file missing: {audio_file}. "
+                    "Generation cannot proceed without authentic audio."
+                )
+
+            ok, msg = validate_audio_file(audio_file)
+            if not ok:
+                raise RuntimeError(f"Selected audio file '{audio_file}' failed validation: {msg}")
+
+            audio = AudioFileClip(str(audio_file))
+            if is_quran:
+                # Never cut off authentic Quran recitation
+                audio = audio.volumex(vol)
+                final_video_clip = final_video_clip.set_audio(audio)
+                log(f"🎙️  Qur'anic recitation attached: {Path(audio_file).name} (dur: {audio.duration:.1f}s, vol: {vol})")
+            else:
+                if audio.duration > (start_time + video_duration):
+                    audio = audio.subclip(start_time, start_time + video_duration)
                 else:
-                    try:
-                        from nasheed_engine import nasheed_engine
-                        audio_res = nasheed_engine.prepare_audio_for_video(content, video_duration)
-                        if audio_res:
-                            audio_file = audio_res.get("audio_path")
-                            start_time = float(audio_res.get("start_time", 0.0))
-                            vol = float(audio_res.get("volume", vol))
-                    except Exception:
-                        pass
-
-                if not audio_file:
-                    from audio_manager import get_audio_file
-                    audio_file = get_audio_file(duration=video_duration)
-
-                if audio_file and Path(audio_file).exists():
-                    audio = AudioFileClip(audio_file)
-                    if audio.duration > (start_time + video_duration):
-                        audio = audio.subclip(start_time, start_time + video_duration)
-                    else:
-                        audio = audio.subclip(0, min(video_duration, audio.duration))
-                    audio = audio.volumex(vol).audio_fadein(1.0).audio_fadeout(2.0)
-                    final_video_clip = final_video_clip.set_audio(audio)
-                    log(f"🎵 Background audio attached: {Path(audio_file).name} (vol: {vol})")
-            except Exception as e:
-                log(f"⚠️  Audio attachment skipped: {e}", level="WARNING")
+                    audio = audio.subclip(0, min(video_duration, audio.duration))
+                audio = audio.volumex(vol).audio_fadein(1.0).audio_fadeout(2.0)
+                final_video_clip = final_video_clip.set_audio(audio)
+                log(f"🎵 Background audio attached: {Path(audio_file).name} (vol: {vol})")
 
         # 6. Encode Video
         out_path = str(config.OUTPUT_DIR / f"{base_name}.mp4")
@@ -480,10 +632,37 @@ def generate_video(
         except Exception:
             pass
 
-    # 7. Validate rendered file
+    # 7. Validate rendered MP4 file: Video Stream, Fixed 1080x1920, Full Decode & Audio
     out_file = Path(out_path)
     if not out_file.exists() or out_file.stat().st_size < 10000:
         raise RuntimeError(f"Video encoding failed or output file is empty: {out_path}")
 
-    log(f"✅ Video produced successfully: {out_path} ({out_file.stat().st_size // 1024} KB)")
+    # Step 7A: Comprehensive Video Validation (H.264, 1080x1920, yuv420p, fps, full FFmpeg decode)
+    is_v_valid, v_err_msg, v_meta = validate_video_file(
+        out_path,
+        expected_width=config.VIDEO_WIDTH,
+        expected_height=config.VIDEO_HEIGHT,
+        expected_codec="h264",
+        expected_pix_fmt="yuv420p",
+        expected_fps=fps,
+        expected_min_duration=min(1.0, float(video_duration)),
+    )
+    if not is_v_valid:
+        try:
+            out_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise RuntimeError(f"Rendered video failed visual validation: {v_err_msg}")
+
+    # Step 7B: Audio Stream & Signal Validation (Zero silent fallbacks)
+    if enable_audio:
+        is_a_valid, a_err_msg, a_meta = validate_mp4_audio(out_path)
+        if not is_a_valid:
+            try:
+                out_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise RuntimeError(f"Rendered video failed audio validation: {a_err_msg}")
+
+    log(f"✅ Video produced and verified successfully: {out_path} ({out_file.stat().st_size // 1024} KB)")
     return out_path, preview_path

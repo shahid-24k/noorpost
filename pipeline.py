@@ -200,14 +200,31 @@ def generate_media(
     # 3. Audio Selection & Attribution
     audio_info = None
     if enable_audio:
-        try:
-            audio_info = nasheed_engine.prepare_audio_for_video(dua, float(video_dur))
-            if audio_info and audio_info.get("attribution"):
-                # Append required track attribution to social caption
-                if audio_info["attribution"] not in caption:
-                    caption += f"\n\n🎵 {audio_info['attribution']}"
-        except Exception as e:
-            log(f"Nasheed preparation skipped: {e}", level="WARNING")
+        is_quran = (
+            cat_key in ("quranic_verses", "quran")
+            or "qur'an" in str(dua.get("type", "")).lower()
+            or "quran" in str(dua.get("type", "")).lower()
+            or "quran" in cat_key
+        )
+        if is_quran:
+            from quran_audio import get_quran_recitation
+            try:
+                audio_info = get_quran_recitation(dua)
+                # Video duration must match authentic recitation duration (no truncation)
+                if audio_info.get("duration"):
+                    video_dur = max(5, int(round(audio_info["duration"])))
+            except Exception as e:
+                log(f"Qur'an recitation acquisition failed: {e}", level="ERROR")
+                raise
+        else:
+            try:
+                audio_info = nasheed_engine.prepare_audio_for_video(dua, float(video_dur))
+                if audio_info and audio_info.get("attribution"):
+                    # Append required track attribution to social caption
+                    if audio_info["attribution"] not in caption:
+                        caption += f"\n\n🎵 {audio_info['attribution']}"
+            except Exception as e:
+                log(f"Nasheed preparation skipped: {e}", level="WARNING")
 
     # 4. Render video
     video_path, preview_path = generate_video(

@@ -8,6 +8,8 @@ Features:
 - Quran Recitation Protection: Automatically disables background audio for Qur'anic content.
 - Speech Clarity Attenuation: Reduces audio volume for spoken khutbahs and lectures.
 - Graceful silent fallback when no suitable audio is available.
+- Path resolution relative to config.BASE_DIR.
+- Automatic download of missing tracks from private Dropbox /NoorPost_Audio.
 """
 
 import os
@@ -17,8 +19,9 @@ from typing import Dict, Any, Optional, List, Tuple
 
 import config
 from logger import log
+from audio_manager import validate_audio_file
 
-CATALOG_PATH = Path("assets/nasheeds/catalog.json")
+CATALOG_PATH = config.BASE_DIR / "assets" / "nasheeds" / "catalog.json"
 
 # ── Mood-to-Category Mapping ────────────────────────────────────────────────
 # Categories whose content carries a sad, reflective, or emotional tone.
@@ -40,13 +43,18 @@ class NasheedEngine:
 
     def __init__(self, catalog_path: Optional[Path] = None):
         self.catalog_path = catalog_path or CATALOG_PATH
+        if not self.catalog_path.is_absolute():
+            self.catalog_path = config.BASE_DIR / self.catalog_path
         self.catalog = self._load_catalog()
 
     def _load_catalog(self) -> Dict[str, Any]:
+        """Loads assets/nasheeds/catalog.json from configured absolute path."""
         if self.catalog_path.exists():
             try:
                 with open(self.catalog_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    log(f"📖 Loaded audio catalog from {self.catalog_path} ({len(data.get('tracks', []))} tracks)")
+                    return data
             except Exception as e:
                 log(f"Failed to load nasheed catalog: {e}", level="WARNING")
         return {"tracks": []}
@@ -150,14 +158,28 @@ class NasheedEngine:
     def _ensure_track_available(self, track: Dict[str, Any]) -> bool:
         """
         Ensure track is available locally. If missing or under 1000 bytes,
-        attempts to download from private Dropbox /NoorPost_Audio folder.
+        attempts to check alternate paths and download from private Dropbox /NoorPost_Audio folder.
         """
         local_path = track.get("local_path")
         if not local_path:
             return False
         p = Path(local_path)
+        if not p.is_absolute():
+            p = config.BASE_DIR / p
         if p.exists() and p.stat().st_size >= 1000:
+            track["local_path"] = str(p)
             return True
+
+        # Check alternative asset directories
+        alt_paths = [
+            config.BASE_DIR / "assets" / "nasheeds" / p.name,
+            config.BASE_DIR / "assets" / "audio" / "nasheeds" / p.name,
+            config.BASE_DIR / "assets" / "audio" / p.name,
+        ]
+        for alt in alt_paths:
+            if alt.exists() and alt.stat().st_size >= 1000:
+                track["local_path"] = str(alt)
+                return True
 
         # Attempt to pull from private Dropbox storage
         remote_path = f"/NoorPost_Audio/{p.name}"
@@ -172,6 +194,7 @@ class NasheedEngine:
                     out_f.write(resp.content)
                 if p.exists() and p.stat().st_size >= 1000:
                     log(f"✅ Downloaded '{p.name}' ({p.stat().st_size} bytes).")
+                    track["local_path"] = str(p)
                     return True
         except Exception as e:
             log(f"ℹ️  Could not download '{p.name}' from Dropbox: {e}", level="INFO")
@@ -187,7 +210,7 @@ class NasheedEngine:
     ) -> Optional[Dict[str, Any]]:
         """
         Selects track by mood, extracts highlight segment, applies fades, and sets volume.
-        Returns audio details dictionary, or None if no audio should be attached.
+        Returns audio details dictionary, or None if no audio should be attached (e.g. Quran recitation).
         """
         track = self.select_track_for_content(content_item, allow_quran=allow_quran)
         if not track:
@@ -196,7 +219,12 @@ class NasheedEngine:
         if not self._ensure_track_available(track):
             log(f"ℹ️ Audio file for '{track.get('title')}' is not present locally or on Dropbox. Defaulting to silent audio.", level="INFO")
             return None
-        audio_file = track.get("local_path")
+
+        local_rel = track.get("local_path")
+        p = Path(local_rel)
+        if not p.is_absolute():
+            p = config.BASE_DIR / p
+        audio_file = str(p)
 
         start_sec, end_sec, label = self.get_highlight_timing(track, target_duration)
 
@@ -205,6 +233,9 @@ class NasheedEngine:
             volume = getattr(config, "LECTURE_AUDIO_VOLUME", 0.12)
         else:
             volume = getattr(config, "AUDIO_VOLUME", 0.35)
+
+        log(f"🎵 Audio track selected by mood '{track.get('mood')}': '{track.get('title')}'")
+        log(f"🎵 Attached personal audio: '{track.get('title')}' (path: {Path(audio_file).name}, vol: {volume})")
 
         return {
             "track_id": track.get("id"),
@@ -218,6 +249,7 @@ class NasheedEngine:
             "attribution": track.get("required_attribution", ""),
             "license_status": track.get("external_use_permission", "OWNER_APPROVED"),
             "mood": track.get("mood", "happy"),
+            "is_quran_recitation": False,
         }
 
 

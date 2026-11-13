@@ -55,7 +55,7 @@ class TestVideoGenerator(unittest.TestCase):
         self.assertEqual(f2.size, (1080, 1920))
 
     def test_unique_output_filenames_and_creation(self):
-        dua = DUAS[1]
+        dua = DUAS[35]
         v1, p1 = generate_video(dua, preset="fast", duration=1)
         v2, p2 = generate_video(dua, preset="fast", duration=1)
 

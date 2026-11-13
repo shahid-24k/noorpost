@@ -192,8 +192,10 @@ Today we reflect upon the supreme virtues of gratitude.
         self.assertIn("Imam Academy", cap)
         self.assertIn("#SabrAndShukr", cap)
 
+    @patch("audio_manager.validate_mp4_audio", return_value=(True, "valid", {}))
+    @patch("video_generator.validate_video_file", return_value=(True, "valid", {}))
     @patch("instagram.get_dropbox_client")
-    def test_mocked_dropbox_upload(self, mock_get_client):
+    def test_mocked_dropbox_upload(self, mock_get_client, mock_v_val, mock_a_val):
         mock_dbx = MagicMock()
         mock_get_client.return_value = mock_dbx
 
